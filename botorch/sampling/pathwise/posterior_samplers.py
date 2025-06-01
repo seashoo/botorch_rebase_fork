@@ -17,7 +17,7 @@ r"""
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import torch
 from botorch.exceptions.errors import UnsupportedError
@@ -46,7 +46,7 @@ from botorch.utils.dispatcher import Dispatcher
 from botorch.utils.transforms import is_ensemble
 from gpytorch.models import ApproximateGP, ExactGP, GP
 from gpytorch.variational import _VariationalStrategy
-from torch import Size
+from torch import Size, Tensor
 
 DrawMatheronPaths = Dispatcher("draw_matheron_paths")
 
@@ -54,7 +54,8 @@ DrawMatheronPaths = Dispatcher("draw_matheron_paths")
 class MatheronPath(PathDict):
     r"""Represents function draws from a GP posterior via Matheron's rule:
 
-
+    .. code-block:: text
+    
               "Prior path"
                    v
     (f | y)(·) = f(·) + Cov(f(·), y) Cov(y, y)^{-1} (y - f(X) - ε),
@@ -62,14 +63,17 @@ class MatheronPath(PathDict):
                                             v
                                       "Update path"
 
+    where `=` denotes equality in distribution, :math:`f \sim GP(0, k)`,
+    :math:`y \sim N(f(X), \Sigma)`, and :math:`\epsilon \sim N(0, \Sigma)`.
+    For more information, see [wilson2020sampling]_ and [wilson2021pathwise]_.
     """
 
     def __init__(
         self,
         prior_paths: SamplePath,
         update_paths: SamplePath,
-        input_transform: Optional[TInputTransform] = None,
-        output_transform: Optional[TOutputTransform] = None,
+        input_transform: TInputTransform | None = None,
+        output_transform: TOutputTransform | None = None,
     ) -> None:
         r"""Initializes a MatheronPath instance.
 
@@ -114,7 +118,7 @@ def get_matheron_path_model(
     if isinstance(model, ModelList) and len(model.models) != num_outputs:
         raise UnsupportedError("A model-list of multi-output models is not supported.")
 
-    def f(X: torch.Tensor) -> torch.Tensor:
+    def f(X: Tensor) -> Tensor:
         r"""Reshapes the path evaluations to bring the output dimension to the end.
 
         Args:
@@ -126,16 +130,10 @@ def get_matheron_path_model(
             The output tensor of shape `batch_shape x q x m`.
         """
         if num_outputs == 1:
-            # For single-output, we lack the output dimension. Add one.
             res = path(X).unsqueeze(-1)
         elif isinstance(model, ModelList):
-            # For model list, path evaluates to a list of tensors. Stack them.
             res = torch.stack(path(X), dim=-1)
         else:
-            # For multi-output, path expects inputs broadcastable to
-            # `model._aug_batch_shape x q x d` and returns outputs of shape
-            # `model._aug_batch_shape x q`. Augmented batch shape includes the
-            # `m` dimension, so we will unsqueeze that and transpose after.
             res = path(X.unsqueeze(-3)).transpose(-1, -2)
         return res
 

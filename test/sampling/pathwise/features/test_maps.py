@@ -14,12 +14,6 @@ from math import prod
 import torch
 from botorch.sampling.pathwise.features import maps
 from botorch.sampling.pathwise.features.generators import gen_kernel_feature_map
-
-# Removed unused imports
-# from botorch.sampling.pathwise.utils.transforms import (
-#     ChainedTransform,
-#     FeatureSelector
-# )
 from botorch.utils.testing import BotorchTestCase
 from gpytorch import kernels
 from linear_operator.operators import KroneckerProductLinearOperator

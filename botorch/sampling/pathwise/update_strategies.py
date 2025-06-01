@@ -49,17 +49,16 @@ def gaussian_update(
 ) -> GeneralizedLinearPath:
     r"""Computes a Gaussian pathwise update in exact arithmetic:
 
+     .. code-block:: text
+     
         (f | y)(·) = f(·) + Cov(f(·), y) Cov(y, y)^{-1} (y - f(X) - ε),
                             \_______________________________________/
                                                 V
                                     "Gaussian pathwise update"
 
-    Args:
-        model: A Gaussian process prior together with a likelihood.
-        sample_values: Assumed values for :math:`f(X)`.
-        likelihood: An optional likelihood used to help define the desired
-            update. Defaults to `model.likelihood` if it exists else None.
-        **kwargs: Additional keyword arguments are passed to subroutines.
+    where `=` denotes equality in distribution, :math:`f \sim GP(0, k)`,
+    :math:`y \sim N(f(X), \Sigma)`, and :math:`\epsilon \sim N(0, \Sigma)`.
+    For more information, see [wilson2020sampling]_ and [wilson2021pathwise]_.
     """
     if likelihood is DEFAULT:
         likelihood = getattr(model, "likelihood", None)
@@ -161,6 +160,7 @@ def _draw_kernel_feature_paths_MultiTaskGP(
 
     # Prepare product kernel
     num_inputs = points.shape[-1]
+    # TODO: Changed `MultiTaskGP` to normalize the task feature in its constructor.
     task_index = (
         num_inputs + model._task_feature
         if model._task_feature < 0

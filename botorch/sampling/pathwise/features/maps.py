@@ -7,9 +7,10 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from itertools import repeat
 from math import prod
 from string import ascii_letters
-from typing import Any, Iterable, List, Optional, Union
+from typing import Any, Iterable, List
 
 import torch
 from botorch.exceptions.errors import UnsupportedError
@@ -34,10 +35,10 @@ from torch.nn import Module
 class FeatureMap(TransformedModuleMixin, Module):
     raw_output_shape: Size
     batch_shape: Size
-    input_transform: Optional[TInputTransform]
-    output_transform: Optional[TOutputTransform]
-    device: Optional[torch.device]
-    dtype: Optional[torch.dtype]
+    input_transform: TInputTransform | None
+    output_transform: TOutputTransform | None
+    device: torch.device | None
+    dtype: torch.dtype | None
 
     @abstractmethod
     def forward(self, x: Tensor, **kwargs: Any) -> Any:
@@ -72,11 +73,11 @@ class FeatureMapList(Module, ModuleListMixin[FeatureMap]):
         Module.__init__(self)
         ModuleListMixin.__init__(self, attr_name="feature_maps", modules=feature_maps)
 
-    def forward(self, x: Tensor, **kwargs: Any) -> List[Union[Tensor, LinearOperator]]:
+    def forward(self, x: Tensor, **kwargs: Any) -> List[Tensor | LinearOperator]:
         return [feature_map(x, **kwargs) for feature_map in self]
 
     @property
-    def device(self) -> Optional[torch.device]:
+    def device(self) -> torch.device | None:
         devices = {feature_map.device for feature_map in self}
         devices.discard(None)
         if len(devices) > 1:
@@ -84,7 +85,7 @@ class FeatureMapList(Module, ModuleListMixin[FeatureMap]):
         return next(iter(devices)) if devices else None
 
     @property
-    def dtype(self) -> Optional[torch.dtype]:
+    def dtype(self) -> torch.dtype | None:
         dtypes = {feature_map.dtype for feature_map in self}
         dtypes.discard(None)
         if len(dtypes) > 1:
@@ -100,8 +101,8 @@ class DirectSumFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
     def __init__(
         self,
         feature_maps: Iterable[FeatureMap],
-        input_transform: Optional[TInputTransform] = None,
-        output_transform: Optional[TOutputTransform] = None,
+        input_transform: TInputTransform | None = None,
+        output_transform: TOutputTransform | None = None,
     ):
         """Initialize a direct sum feature map.
 
@@ -116,75 +117,41 @@ class DirectSumFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
         self.output_transform = output_transform
 
     def forward(self, x: Tensor, **kwargs: Any) -> Tensor:
-        feature_maps = list(self)
-        if len(feature_maps) == 1:
-            return feature_maps[0](x, **kwargs)
+        blocks = []
+        shape = self.raw_output_shape
+        ndim = len(shape)
+        for feature_map in self:
+            block = feature_map(x, **kwargs).to_dense()
+            block_ndim = len(feature_map.output_shape)
+            if block_ndim < ndim:
+                tile_shape = shape[-ndim:-block_ndim]
+                num_copies = prod(tile_shape)
+                if num_copies > 1:
+                    block = block * (num_copies**-0.5)
 
-        # Special handling for mock maps in tests
-        if len(feature_maps) == 2:
-            mock_map = next(
-                (
-                    f
-                    for f in feature_maps
-                    if hasattr(f, "__class__") and f.__class__.__name__ == "MagicMock"
-                ),
-                None,
-            )
-            if mock_map is not None:
-                real_map = next(
-                    f
-                    for f in feature_maps
-                    if not (
-                        hasattr(f, "__class__") and f.__class__.__name__ == "MagicMock"
-                    )
+                multi_index = (
+                    ...,
+                    *repeat(None, ndim - block_ndim),
+                    *repeat(slice(None), block_ndim),
                 )
-                mock_output = mock_map(x, **kwargs)
-                real_output = real_map(x, **kwargs).to_dense()
-                d = mock_output.shape[-1]
-                real_output = real_output * (d**-0.5)
-                return torch.cat([mock_output, real_output], dim=-1)
+                block = block[multi_index].expand(
+                    *block.shape[:-block_ndim], *tile_shape, *block.shape[-block_ndim:]
+                )
+            blocks.append(block)
 
-        # Normal case
-        features = []
-        for feature_map in feature_maps:
-            feature = feature_map(x, **kwargs)
-            if isinstance(feature, LinearOperator):
-                feature = feature.to_dense()
-            features.append(feature)
-        return torch.cat(features, dim=-1)
+        return torch.concat(blocks, dim=-1)
 
     @property
     def raw_output_shape(self) -> Size:
-        feature_maps = list(self)
-        if not feature_maps:
-            return Size([])
-
-        # Special handling for mock maps in tests
-        if len(feature_maps) == 2:
-            mock_map = next(
-                (
-                    f
-                    for f in feature_maps
-                    if hasattr(f, "__class__") and f.__class__.__name__ == "MagicMock"
-                ),
-                None,
+        map_iter = iter(self)
+        feature_map = next(map_iter)
+        concat_size = feature_map.output_shape[-1]
+        batch_shape = feature_map.output_shape[:-1]
+        for feature_map in map_iter:
+            concat_size += feature_map.output_shape[-1]
+            batch_shape = torch.broadcast_shapes(
+                batch_shape, feature_map.output_shape[:-1]
             )
-            if mock_map is not None:
-                real_map = next(
-                    f
-                    for f in feature_maps
-                    if not (
-                        hasattr(f, "__class__") and f.__class__.__name__ == "MagicMock"
-                    )
-                )
-                d = mock_map.output_shape[0]
-                return Size([d, d + real_map.output_shape[0]])
-
-        # Normal case
-        concat_size = sum(f.output_shape[-1] for f in feature_maps)
-        batch_shape = torch.broadcast_shapes(
-            *(f.output_shape[:-1] for f in feature_maps)
-        )
         return Size((*batch_shape, concat_size))
 
     @property
@@ -203,8 +170,8 @@ class HadamardProductFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
     def __init__(
         self,
         feature_maps: Iterable[FeatureMap],
-        input_transform: Optional[TInputTransform] = None,
-        output_transform: Optional[TOutputTransform] = None,
+        input_transform: TInputTransform | None = None,
+        output_transform: TOutputTransform | None = None,
     ):
         """Initialize a Hadamard product feature map.
 
@@ -230,6 +197,24 @@ class HadamardProductFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
         batch_shapes = (feature_map.batch_shape for feature_map in self)
         return torch.broadcast_shapes(*batch_shapes)
 
+    @property
+    def device(self) -> torch.device | None:
+        devices = {feature_map.device for feature_map in self}
+        devices.discard(None)
+        if len(devices) > 1:
+            raise UnsupportedError(f"Feature maps must be colocated, but {devices=}.")
+        return next(iter(devices)) if devices else None
+
+    @property
+    def dtype(self) -> torch.dtype | None:
+        dtypes = {feature_map.dtype for feature_map in self}
+        dtypes.discard(None)
+        if len(dtypes) > 1:
+            raise UnsupportedError(
+                f"Feature maps must have the same data type, but {dtypes=}."
+            )
+        return next(iter(dtypes)) if dtypes else None
+
 
 class OuterProductFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
     r"""Outer product of vector-valued features."""
@@ -237,8 +222,8 @@ class OuterProductFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
     def __init__(
         self,
         feature_maps: Iterable[FeatureMap],
-        input_transform: Optional[TInputTransform] = None,
-        output_transform: Optional[TOutputTransform] = None,
+        input_transform: TInputTransform | None = None,
+        output_transform: TOutputTransform | None = None,
     ):
         """Initialize an outer product feature map.
 
@@ -277,6 +262,24 @@ class OuterProductFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
         batch_shapes = (feature_map.batch_shape for feature_map in self)
         return torch.broadcast_shapes(*batch_shapes)
 
+    @property
+    def device(self) -> torch.device | None:
+        devices = {feature_map.device for feature_map in self}
+        devices.discard(None)
+        if len(devices) > 1:
+            raise UnsupportedError(f"Feature maps must be colocated, but {devices=}.")
+        return next(iter(devices)) if devices else None
+
+    @property
+    def dtype(self) -> torch.dtype | None:
+        dtypes = {feature_map.dtype for feature_map in self}
+        dtypes.discard(None)
+        if len(dtypes) > 1:
+            raise UnsupportedError(
+                f"Feature maps must have the same data type, but {dtypes=}."
+            )
+        return next(iter(dtypes)) if dtypes else None
+
 
 class KernelFeatureMap(FeatureMap):
     r"""Base class for FeatureMap subclasses that represent kernels."""
@@ -284,8 +287,8 @@ class KernelFeatureMap(FeatureMap):
     def __init__(
         self,
         kernel: kernels.Kernel,
-        input_transform: Optional[TInputTransform] = None,
-        output_transform: Optional[TOutputTransform] = None,
+        input_transform: TInputTransform | None = None,
+        output_transform: TOutputTransform | None = None,
         ignore_active_dims: bool = False,
     ) -> None:
         r"""Initializes a KernelFeatureMap instance.
@@ -313,11 +316,11 @@ class KernelFeatureMap(FeatureMap):
         return self.kernel.batch_shape
 
     @property
-    def device(self) -> Optional[torch.device]:
+    def device(self) -> torch.device | None:
         return self.kernel.device
 
     @property
-    def dtype(self) -> Optional[torch.dtype]:
+    def dtype(self) -> torch.dtype | None:
         return self.kernel.dtype
 
 
@@ -328,10 +331,14 @@ class KernelEvaluationMap(KernelFeatureMap):
         self,
         kernel: kernels.Kernel,
         points: Tensor,
-        input_transform: Optional[TInputTransform] = None,
-        output_transform: Optional[TOutputTransform] = None,
+        input_transform: TInputTransform | None = None,
+        output_transform: TOutputTransform | None = None,
     ) -> None:
-        r"""Initializes a KernelEvaluationMap instance.
+        r"""Initializes a KernelEvaluationMap instance:
+
+        .. code-block:: text
+
+            feature_map(x) = output_transform(kernel(input_transform(x), points)).
 
         Args:
             kernel: The kernel :math:`k` used to define the feature map.
@@ -358,7 +365,7 @@ class KernelEvaluationMap(KernelFeatureMap):
         )
         self.points = points
 
-    def forward(self, x: Tensor) -> Union[Tensor, LinearOperator]:
+    def forward(self, x: Tensor) -> Tensor | LinearOperator:
         return self.kernel(x, self.points)
 
     @property
@@ -378,9 +385,9 @@ class FourierFeatureMap(KernelFeatureMap):
         self,
         kernel: kernels.Kernel,
         weight: Tensor,
-        bias: Optional[Tensor] = None,
-        input_transform: Optional[TInputTransform] = None,
-        output_transform: Optional[TOutputTransform] = None,
+        bias: Tensor | None = None,
+        input_transform: TInputTransform | None = None,
+        output_transform: TOutputTransform | None = None,
     ) -> None:
         r"""Initializes a FourierFeatureMap instance.
 
@@ -412,8 +419,8 @@ class IndexKernelFeatureMap(KernelFeatureMap):
     def __init__(
         self,
         kernel: kernels.IndexKernel,
-        input_transform: Optional[TInputTransform] = None,
-        output_transform: Optional[TOutputTransform] = None,
+        input_transform: TInputTransform | None = None,
+        output_transform: TOutputTransform | None = None,
         ignore_active_dims: bool = False,
     ) -> None:
         r"""Initializes an IndexKernelFeatureMap instance.
@@ -424,6 +431,7 @@ class IndexKernelFeatureMap(KernelFeatureMap):
                 For kernels with `active_dims`, defaults to a FeatureSelector
                 instance that extracts the relevant input features.
             output_transform: An optional output transform for the module.
+            ignore_active_dims: Whether to ignore the kernel's active_dims.
         """
         if not isinstance(kernel, kernels.IndexKernel):
             raise ValueError(f"Expected {kernels.IndexKernel}, but {type(kernel)=}.")
@@ -435,7 +443,7 @@ class IndexKernelFeatureMap(KernelFeatureMap):
             ignore_active_dims=ignore_active_dims,
         )
 
-    def forward(self, x: Optional[Tensor]) -> LinearOperator:
+    def forward(self, x: Tensor | None) -> LinearOperator:
         if x is None:
             return self.kernel.covar_matrix.cholesky()
 
@@ -458,8 +466,8 @@ class LinearKernelFeatureMap(KernelFeatureMap):
         self,
         kernel: kernels.LinearKernel,
         raw_output_shape: Size,
-        input_transform: Optional[TInputTransform] = None,
-        output_transform: Optional[TOutputTransform] = None,
+        input_transform: TInputTransform | None = None,
+        output_transform: TOutputTransform | None = None,
         ignore_active_dims: bool = False,
     ) -> None:
         r"""Initializes a LinearKernelFeatureMap instance.
@@ -471,6 +479,7 @@ class LinearKernelFeatureMap(KernelFeatureMap):
                 For kernels with `active_dims`, defaults to a FeatureSelector
                 instance that extracts the relevant input features.
             output_transform: An optional output transform for the module.
+            ignore_active_dims: Whether to ignore the kernel's active_dims.
         """
         if not isinstance(kernel, kernels.LinearKernel):
             raise ValueError(f"Expected {kernels.LinearKernel}, but {type(kernel)=}.")
@@ -494,8 +503,8 @@ class MultitaskKernelFeatureMap(KernelFeatureMap):
         self,
         kernel: kernels.MultitaskKernel,
         data_feature_map: FeatureMap,
-        input_transform: Optional[TInputTransform] = None,
-        output_transform: Optional[TOutputTransform] = None,
+        input_transform: TInputTransform | None = None,
+        output_transform: TOutputTransform | None = None,
         ignore_active_dims: bool = False,
     ) -> None:
         r"""Initializes a MultitaskKernelFeatureMap instance.
@@ -508,6 +517,7 @@ class MultitaskKernelFeatureMap(KernelFeatureMap):
                 For kernels with `active_dims`, defaults to a FeatureSelector
                 instance that extracts the relevant input features.
             output_transform: An optional output transform for the module.
+            ignore_active_dims: Whether to ignore the kernel's active_dims.
         """
         if not isinstance(kernel, kernels.MultitaskKernel):
             raise ValueError(
@@ -522,7 +532,7 @@ class MultitaskKernelFeatureMap(KernelFeatureMap):
         )
         self.data_feature_map = data_feature_map
 
-    def forward(self, x: Tensor) -> Union[KroneckerProductLinearOperator, Tensor]:
+    def forward(self, x: Tensor) -> KroneckerProductLinearOperator | Tensor:
         r"""Returns the Kronecker product of the square root task covariance matrix
         and a feature-map-based representation of :code:`data_covar_module`.
         """
