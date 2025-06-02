@@ -309,13 +309,71 @@ def _gen_kernel_feature_map_scale(
 @GenKernelFeatureMap.register(kernels.ProductKernel)
 def _gen_kernel_feature_map_product(
     kernel: kernels.ProductKernel,
+    sub_kernels: Iterable[kernels.Kernel] | None = None,
+    cosine_only: bool | None = DEFAULT,
+    num_random_features: int | None = None,
     **kwargs: Any,
 ) -> OuterProductFeatureMap:
-    feature_maps = []
-    for sub_kernel in kernel.kernels:
-        feature_map = gen_kernel_feature_map(kernel=sub_kernel, **kwargs)
-        feature_maps.append(feature_map)
-    return OuterProductFeatureMap(feature_maps=feature_maps)
+    r"""Generate a feature map for a product kernel.
+
+    This implementation follows Balandat's approach from the original patch:
+    1. Separates finite-dimensional and infinite-dimensional sub-kernels
+    2. Uses Hadamard (element-wise) product to combine infinite-dimensional kernels
+    3. Uses outer product to combine finite-dimensional kernels with the combined
+       infinite-dimensional kernel
+    4. Automatically uses cosine-only features when multiple infinite-dimensional
+       kernels are present to avoid tensor products of sine and cosine features
+
+    Args:
+        kernel: The ProductKernel to generate features for.
+        sub_kernels: Optional iterable of sub-kernels to use instead of kernel.kernels.
+        cosine_only: Whether to use cosine-only features. If DEFAULT, automatically
+            determined based on the number of infinite-dimensional sub-kernels.
+        num_random_features: Number of random features for infinite-dimensional kernels.
+        **kwargs: Additional arguments passed to :func:`gen_kernel_feature_map`.
+    """
+    sub_kernels = kernel.kernels if sub_kernels is None else sub_kernels
+    if cosine_only is DEFAULT:
+        # Note: We need to set `cosine_only=True` here in order to take the element-wise
+        # product of features below. Otherwise, we would need to take the tensor product
+        # of each pair of sine and cosine features.
+        cosine_only = sum(not is_finite_dimensional(k) for k in sub_kernels) > 1
+
+    # Generate feature maps for each sub-kernel
+    sub_maps = []
+    random_maps = []
+    for sub_kernel in sub_kernels:
+        sub_map = gen_kernel_feature_map(
+            kernel=sub_kernel,
+            cosine_only=cosine_only,
+            num_random_features=num_random_features,
+            random_feature_scale=1.0,  # we rescale once at the end
+            **kwargs,
+        )
+        if is_finite_dimensional(sub_kernel):
+            sub_maps.append(sub_map)
+        else:
+            random_maps.append(sub_map)
+
+    # Define element-wise product of random feature maps
+    if random_maps:
+        random_map = (
+            next(iter(random_maps))
+            if len(random_maps) == 1
+            else HadamardProductFeatureMap(feature_maps=random_maps)
+        )
+        constant = torch.tensor(
+            num_random_features**-0.5, device=kernel.device, dtype=kernel.dtype
+        )
+        prepend_transform(
+            module=random_map,
+            attr_name="output_transform",
+            transform=transforms.ConstantMulTransform(constant),
+        )
+        sub_maps.append(random_map)
+
+    # Return outer product `einsum("i,j,k->ijk", ...).view(-1)`
+    return OuterProductFeatureMap(feature_maps=sub_maps)
 
 
 @GenKernelFeatureMap.register(kernels.AdditiveKernel)
@@ -367,6 +425,7 @@ def _gen_kernel_feature_map_linear(
     kernel: kernels.LinearKernel,
     *,
     num_inputs: int | None = None,
+    num_ambient_inputs: int | None = None,
     **ignore: Any,
 ) -> LinearKernelFeatureMap:
     r"""Generate a feature map for a linear kernel.
@@ -379,7 +438,7 @@ def _gen_kernel_feature_map_linear(
         num_inputs: The number of input features.
         **ignore: Additional arguments (ignored).
     """
-    num_features = get_kernel_num_inputs(kernel=kernel, num_ambient_inputs=num_inputs)
+    num_features = get_kernel_num_inputs(kernel=kernel, num_ambient_inputs=num_ambient_inputs or num_inputs)
     return LinearKernelFeatureMap(kernel=kernel, raw_output_shape=Size([num_features]))
 
 
