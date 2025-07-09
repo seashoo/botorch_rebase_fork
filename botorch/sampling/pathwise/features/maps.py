@@ -216,6 +216,88 @@ class HadamardProductFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
         return next(iter(dtypes)) if dtypes else None
 
 
+class SparseDirectSumFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
+    r"""Sparse direct sums of features with block diagonal structure."""
+
+    def __init__(
+        self,
+        feature_maps: Iterable[FeatureMap],
+        input_transform: TInputTransform | None = None,
+        output_transform: TOutputTransform | None = None,
+    ):
+        """Initialize a sparse direct sum feature map.
+
+        Args:
+            feature_maps: An iterable of feature maps to combine.
+            input_transform: Optional transform to apply to inputs.
+            output_transform: Optional transform to apply to outputs.
+        """
+        FeatureMap.__init__(self)
+        ModuleListMixin.__init__(self, attr_name="feature_maps", modules=feature_maps)
+        self.input_transform = input_transform
+        self.output_transform = output_transform
+
+    def forward(self, x: Tensor, **kwargs: Any) -> Tensor:
+        blocks = []
+        for feature_map in self:
+            block = feature_map(x, **kwargs).to_dense()
+            blocks.append(block)
+
+        # Create sparse block diagonal structure
+        if len(blocks) == 1:
+            return blocks[0]
+        
+        # For sparse direct sum, we create a block diagonal matrix
+        # where each block corresponds to a feature map's output
+        total_size = sum(block.shape[-1] for block in blocks)
+        batch_shape = blocks[0].shape[:-1]
+        
+        # Initialize output tensor with zeros
+        output = torch.zeros(*batch_shape, total_size, device=x.device, dtype=x.dtype)
+        
+        # Handle matrix-valued outputs by creating block diagonal structure
+        offset = 0
+        for block in blocks:
+            if block.ndim > len(batch_shape) + 1:  # Matrix-valued
+                block_size = block.shape[-1]
+                output[..., offset:offset+block_size, offset:offset+block_size] = block
+                offset += block_size
+            else:  # Vector-valued
+                block_size = block.shape[-1]
+                output[..., offset:offset+block_size] = block
+                offset += block_size
+                
+        return output
+
+    @property
+    def raw_output_shape(self) -> Size:
+        total_size = sum(f.output_shape[-1] for f in self)
+        return Size([total_size])
+
+    @property
+    def batch_shape(self) -> Size:
+        batch_shapes = (feature_map.batch_shape for feature_map in self)
+        return torch.broadcast_shapes(*batch_shapes)
+
+    @property
+    def device(self) -> torch.device | None:
+        devices = {feature_map.device for feature_map in self}
+        devices.discard(None)
+        if len(devices) > 1:
+            raise UnsupportedError(f"Feature maps must be colocated, but {devices=}.")
+        return next(iter(devices)) if devices else None
+
+    @property
+    def dtype(self) -> torch.dtype | None:
+        dtypes = {feature_map.dtype for feature_map in self}
+        dtypes.discard(None)
+        if len(dtypes) > 1:
+            raise UnsupportedError(
+                f"Feature maps must have the same data type, but {dtypes=}."
+            )
+        return next(iter(dtypes)) if dtypes else None
+
+
 class OuterProductFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
     r"""Outer product of vector-valued features."""
 
