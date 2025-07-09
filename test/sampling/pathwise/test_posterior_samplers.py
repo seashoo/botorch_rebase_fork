@@ -35,6 +35,7 @@ class TestDrawMatheronPaths(BotorchTestCase):
 
         self.base_models = [
             (batch_config, gen_module(models.SingleTaskGP, batch_config)),
+            (batch_config, gen_module(models.FixedNoiseGP, batch_config)),
             (batch_config, gen_module(models.MultiTaskGP, batch_config)),
             (config, gen_module(models.SingleTaskVariationalGP, config)),
         ]
@@ -78,68 +79,64 @@ class TestDrawMatheronPaths(BotorchTestCase):
                     else Z
                 )
 
-                samples = paths(X)
-                model.eval()
-                with delattr_ctx(model, "outcome_transform"):
-                    posterior = (
-                        model.posterior(X[..., base_features], output_indices=[0])
-                        if isinstance(model, models.MultiTaskGP)
-                        else model.posterior(X)
-                    )
-                    mvn = posterior.mvn
-
-                if isinstance(mvn, MultitaskMultivariateNormal):
-                    num_tasks = kernel.batch_shape[0]
-                    exact_mean = mvn.mean.transpose(-2, -1)
-                    exact_covar = mvn.covariance_matrix.view(num_tasks, n, num_tasks, n)
-                    exact_covar = torch.stack(
-                        [exact_covar[..., i, :, i, :] for i in range(num_tasks)], dim=-3
-                    )
-                else:
-                    exact_mean = mvn.mean
-                    exact_covar = mvn.covariance_matrix
-
-                # Divide by prior standard deviations to put things on the same scale
-                if isinstance(model, SingleTaskVariationalGP):
-                    prior = model.model.forward(Z)
-                else:
-                    prior = model.forward(Z)
-
-                istd = prior.covariance_matrix.diagonal(dim1=-2, dim2=-1).rsqrt()
-                exact_mean = istd * exact_mean
-                exact_covar = istd.unsqueeze(-1) * exact_covar * istd.unsqueeze(-2)
-                if hasattr(model, "outcome_transform"):
-                    if kernel.batch_shape:
-                        samples, _ = model.outcome_transform(samples.transpose(-2, -1))
-                        samples = samples.transpose(-2, -1)
-                    else:
-                        samples, _ = model.outcome_transform(samples.unsqueeze(-1))
-                        samples = samples.squeeze(-1)
-
-                samples = istd * samples.view(-1, *samples.shape[len(sample_shape) :])
-                sample_mean = samples.mean(dim=0)
-                sample_covar = (samples - sample_mean).permute(
-                    *range(1, samples.ndim), 0
+            samples = paths(X)
+            model.eval()
+            with delattr_ctx(model, "outcome_transform"):
+                posterior = (
+                    model.posterior(X[..., base_features], output_indices=[0])
+                    if isinstance(model, models.MultiTaskGP)
+                    else model.posterior(X)
                 )
-                sample_covar = torch.divide(
-                    sample_covar @ sample_covar.transpose(-2, -1), sample_shape.numel()
+                mvn = posterior.mvn
+
+            if isinstance(mvn, MultitaskMultivariateNormal):
+                num_tasks = kernel.batch_shape[0]
+                exact_mean = mvn.mean.transpose(-2, -1)
+                exact_covar = mvn.covariance_matrix.view(num_tasks, n, num_tasks, n)
+                exact_covar = torch.stack(
+                    [exact_covar[..., i, :, i, :] for i in range(num_tasks)], dim=-3
                 )
+            else:
+                exact_mean = mvn.mean
+                exact_covar = mvn.covariance_matrix
 
-                allclose_kwargs = {"atol": slack * sample_shape.numel() ** -0.5}
-                if not is_finite_dimensional(kernel):
-                    num_random_features_per_map = config.num_random_features / (
-                        1
-                        if not is_finite_dimensional(kernel, max_depth=0)
-                        else sum(
-                            not is_finite_dimensional(k)
-                            for k in kernel.modules()
-                            if k is not kernel
-                        )
+            # Divide by prior standard deviations to put things on the same scale
+            prior = (
+                model.forward(Z, prior=True)
+                if isinstance(model, SingleTaskVariationalGP)
+                else model.forward(Z)
+            )
+            istd = prior.covariance_matrix.diagonal(dim1=-2, dim2=-1).rsqrt()
+            exact_mean = istd * exact_mean
+            exact_covar = istd.unsqueeze(-1) * exact_covar * istd.unsqueeze(-2)
+            if hasattr(model, "outcome_transform"):
+                if kernel.batch_shape:
+                    samples, _ = model.outcome_transform(samples.transpose(-2, -1))
+                    samples = samples.transpose(-2, -1)
+                else:
+                    samples, _ = model.outcome_transform(samples.unsqueeze(-1))
+                    samples = samples.squeeze(-1)
+
+            samples = istd * samples.view(-1, *samples.shape[len(sample_shape) :])
+            sample_mean = samples.mean(dim=0)
+            sample_covar = (samples - sample_mean).permute(*range(1, samples.ndim), 0)
+            sample_covar = torch.divide(
+                sample_covar @ sample_covar.transpose(-2, -1), sample_shape.numel()
+            )
+            allclose_kwargs = {"atol": slack * sample_shape.numel() ** -0.5}
+            if not is_finite_dimensional(kernel):
+                num_random_features_per_map = config.num_random_features / (
+                    1
+                    if not is_finite_dimensional(kernel, max_depth=0)
+                    else sum(
+                        not is_finite_dimensional(k)
+                        for k in kernel.modules()
+                        if k is not kernel
                     )
-                    allclose_kwargs["atol"] += slack * num_random_features_per_map**-0.5
-
-                self.assertTrue(exact_mean.allclose(sample_mean, **allclose_kwargs))
-                self.assertTrue(exact_covar.allclose(sample_covar, **allclose_kwargs))
+                )
+                allclose_kwargs["atol"] += slack * num_random_features_per_map**-0.5
+            self.assertTrue(exact_mean.allclose(sample_mean, **allclose_kwargs))
+            self.assertTrue(exact_covar.allclose(sample_covar, **allclose_kwargs))
 
     def test_model_lists(self, tol: float = 3.0):
         sample_shape = Size([32, 32])

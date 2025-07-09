@@ -26,9 +26,6 @@ T = TypeVar("T")
 TFactory = Callable[[], Iterator[T]]
 
 
-# TestCaseConfig: Configuration dataclass for test setup
-# - Provides consistent test parameters across different test cases
-# - Includes device, dtype, dimensions, and other key parameters
 @dataclass(frozen=True)
 class TestCaseConfig:
     device: torch.device
@@ -38,60 +35,11 @@ class TestCaseConfig:
     num_tasks: int = 2
     num_train: int = 5
     batch_shape: Size = field(default_factory=Size)
-    num_random_features: int = 4096
-
-
-# gen_random_inputs: Generates random input tensors for testing
-# - Handles both single-task and multi-task models
-# - Supports transformed/untransformed inputs
-# - Manages task indices for multi-task models
-def gen_random_inputs(
-    model: Model,
-    batch_shape: Iterable[int],
-    transformed: bool = False,
-    task_id: Optional[int] = None,
-    seed: Optional[int] = None,
-) -> torch.Tensor:
-    """Generate random inputs for testing.
-
-    Args:
-        model: Model to generate inputs for
-        batch_shape: Shape of batch dimension
-        transformed: Whether to return transformed inputs
-        task_id: Optional task ID for multi-task models
-        seed: Optional random seed
-
-    Returns:
-        Tensor: Random input tensor
-    """
-    with nullcontext() if seed is None else torch.random.fork_rng():
-        if seed:
-            torch.random.manual_seed(seed)
-
-        (train_X,) = get_train_inputs(model, transformed=True)
-        tkwargs = {"device": train_X.device, "dtype": train_X.dtype}
-        X = torch.rand((*batch_shape, train_X.shape[-1]), **tkwargs)
-        if isinstance(model, models.MultiTaskGP):
-            num_tasks = model.task_covar_module.raw_var.shape[-1]
-            X[..., model._task_feature] = (
-                torch.randint(num_tasks, size=X.shape[:-1], **tkwargs)
-                if task_id is None
-                else task_id
-            )
-
-        if not transformed and hasattr(model, "input_transform"):
-            return model.input_transform.untransform(X)
-
-        return X
+    num_random_features: int = 2048
 
 
 class FactoryFunctionRegistry:
     def __init__(self, factories: Optional[Dict[T, TFactory]] = None):
-        """Initialize the registry with optional factories dictionary.
-
-        Args:
-            factories: Optional dictionary mapping types to factory functions
-        """
         self.factories = {} if factories is None else factories
 
     def register(self, typ: T, **kwargs: Any) -> None:
@@ -116,6 +64,34 @@ class FactoryFunctionRegistry:
         return factory(*args, **kwargs)
 
 
+def gen_random_inputs(
+    model: Model,
+    batch_shape: Iterable[int],
+    transformed: bool = False,
+    task_id: Optional[int] = None,
+    seed: Optional[int] = None,
+) -> torch.Tensor:
+    with (nullcontext() if seed is None else torch.random.fork_rng()):
+        if seed:
+            torch.random.manual_seed(seed)
+
+        (train_X,) = get_train_inputs(model, transformed=True)
+        tkwargs = {"device": train_X.device, "dtype": train_X.dtype}
+        X = torch.rand((*batch_shape, train_X.shape[-1]), **tkwargs)
+        if isinstance(model, models.MultiTaskGP):
+            num_tasks = model.task_covar_module.raw_var.shape[-1]
+            X[..., model._task_feature] = (
+                torch.randint(num_tasks, size=X.shape[:-1], **tkwargs)
+                if task_id is None
+                else task_id
+            )
+
+        if not transformed and hasattr(model, "input_transform"):
+            return model.input_transform.untransform(X)
+
+        return X
+
+
 gen_module = FactoryFunctionRegistry()
 
 
@@ -125,7 +101,7 @@ def _randomize_lengthscales(
     if kernel.ard_num_dims is None:
         raise NotImplementedError
 
-    with nullcontext() if seed is None else torch.random.fork_rng():
+    with (nullcontext() if seed is None else torch.random.fork_rng()):
         if seed:
             torch.random.manual_seed(seed)
 
@@ -266,7 +242,7 @@ def _gen_single_task_model(
                 num_outputs=Y.shape[-1], **model_args
             )
         else:
-            raise UnsupportedError(f"Encountered unexpected model type: {model_type}.")
+            raise UnsupportedError(f"Encounted unexpected model type: {model_type}.")
 
     return model.to(**tkwargs)
 
