@@ -121,11 +121,6 @@ class ModuleDictMixin(ABC, Generic[TModule]):
         """Access the underlying ModuleDict using the unique name."""
         return getattr(self, self.__module_dict_name)
 
-    @property
-    def paths(self) -> ModuleDict:
-        """Access the underlying ModuleDict containing the paths."""
-        return self.__module_dict
-
     # Dictionary interface methods
     def items(self) -> Iterable[Tuple[str, TModule]]:
         """Return (key, value) pairs of the dictionary."""
@@ -198,11 +193,6 @@ class ModuleListMixin(ABC, Generic[TModule]):
     def __module_list(self) -> ModuleList:
         """Access the underlying ModuleList using the unique name."""
         return getattr(self, self.__module_list_name)
-
-    @property
-    def paths(self) -> ModuleList:
-        """Access the underlying ModuleList containing the paths."""
-        return self.__module_list
 
     # List interface methods
     def __len__(self) -> int:

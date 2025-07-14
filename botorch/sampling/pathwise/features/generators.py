@@ -16,7 +16,8 @@ r"""
 
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable, Optional
+from math import pi
+from typing import Any, Callable, Iterable
 
 import torch
 from botorch.exceptions.errors import UnsupportedError
@@ -125,55 +126,33 @@ def _gen_fourier_features(
 
     References: [rahimi2007random]_, [sutherland2015error]_
     """
-
-    if not cosine_only and num_random_features % 2:
-        raise UnsupportedError(
-            f"Expected an even number of random features, but {num_random_features=}."
-        )
-
-    # Get the appropriate number of inputs based on kernel configuration
+    tkwargs = {"device": kernel.device, "dtype": kernel.dtype}
     num_inputs = get_kernel_num_inputs(kernel, num_ambient_inputs=num_inputs)
     input_transform = transforms.InverseLengthscaleTransform(kernel)
-
-    # Handle active dimensions if specified
     if kernel.active_dims is not None:
         num_inputs = len(kernel.active_dims)
-        input_transform = transforms.ChainedTransform(
-            input_transform, transforms.FeatureSelector(indices=kernel.active_dims)
-        )
 
-    # Calculate the constant scaling factor for the features
+    constant = torch.tensor(
+        2**0.5 * (random_feature_scale or num_random_features**-0.5), **tkwargs
+    )
+    output_transforms = [transforms.ConstantMulTransform(constant)]
     if cosine_only:
-        # For cosine-only features, we need different scaling: sqrt(2/n) instead of sqrt(1/n)
-        constant = torch.tensor(
-            (random_feature_scale or (2.0 / num_random_features)**0.5),
-            device=kernel.device,
-            dtype=kernel.dtype,
-        )
-        bias = 2 * torch.pi * torch.rand(num_random_features, device=kernel.device, dtype=kernel.dtype)
+        bias = 2 * pi * torch.rand(num_random_features, **tkwargs)
         num_raw_features = num_random_features
-        output_transforms = [transforms.ConstantMulTransform(constant), transforms.CosineTransform()]
+        output_transforms.append(transforms.CosineTransform())
     elif num_random_features % 2:
         raise UnsupportedError(
             f"Expected an even number of random features, but {num_random_features=}."
         )
     else:
-        # For sine-cosine features, use the standard scaling
-        constant = torch.tensor(
-            2**0.5 * (random_feature_scale or num_random_features**-0.5),
-            device=kernel.device,
-            dtype=kernel.dtype,
-        )
         bias = None
         num_raw_features = num_random_features // 2
-        output_transforms = [transforms.ConstantMulTransform(constant), transforms.SineCosineTransform()]
+        output_transforms.append(transforms.SineCosineTransform())
 
-    # Generate the weight matrix using the provided weight generator
     weight = weight_generator(
         Size([kernel.batch_shape.numel() * num_raw_features, num_inputs])
     ).reshape(*kernel.batch_shape, num_raw_features, num_inputs)
 
-    # Create and return the FourierFeatureMap with appropriate transforms
     return FourierFeatureMap(
         kernel=kernel,
         weight=weight,

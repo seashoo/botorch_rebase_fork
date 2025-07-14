@@ -247,8 +247,41 @@ def _gen_single_task_model(
     return model.to(**tkwargs)
 
 
+def _gen_fixed_noise_gp(config: TestCaseConfig, **kwargs: Any) -> models.SingleTaskGP:
+    """Generate a SingleTaskGP with fixed noise (train_Yvar) to replace FixedNoiseGP."""
+    d = config.num_inputs
+    n = config.num_train
+    tkwargs = {"device": config.device, "dtype": config.dtype}
+    with torch.random.fork_rng():
+        torch.random.manual_seed(config.seed)
+        covar_module = kwargs.get("covar_module") or gen_module(kernels.MaternKernel, config)
+        uppers = 1 + 9 * torch.rand(d, **tkwargs)
+        bounds = pad(uppers.unsqueeze(0), (0, 0, 1, 0))
+        X = uppers * torch.rand(n, d, **tkwargs)
+        Y = X @ torch.randn(*config.batch_shape, d, 1, **tkwargs)
+        if config.batch_shape:
+            Y = Y.squeeze(-1).transpose(-2, -1)
+        
+        # Generate fixed noise
+        train_Yvar = 0.1 * torch.rand_like(Y, **tkwargs)
+        
+        model = models.SingleTaskGP(
+            train_X=X,
+            train_Y=Y,
+            train_Yvar=train_Yvar,
+            covar_module=covar_module,
+            input_transform=Normalize(d=X.shape[-1], bounds=bounds),
+            outcome_transform=Standardize(m=Y.shape[-1]),
+        )
+    
+    return model.to(**tkwargs)
+
+
 for typ in (models.SingleTaskGP, models.SingleTaskVariationalGP):
     gen_module.set_factory(typ, partial(_gen_single_task_model, typ))
+
+# Register the fixed noise GP generator separately
+gen_module.set_factory("FixedNoiseGP", _gen_fixed_noise_gp)
 
 
 @gen_module.register(models.ModelListGP)

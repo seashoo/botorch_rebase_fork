@@ -16,6 +16,7 @@ import torch
 from botorch.exceptions.errors import UnsupportedError
 from botorch.sampling.pathwise.utils import (
     ModuleListMixin,
+    sparse_block_diag,
     TInputTransform,
     TOutputTransform,
     TransformedModuleMixin,
@@ -143,16 +144,47 @@ class DirectSumFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
 
     @property
     def raw_output_shape(self) -> Size:
-        map_iter = iter(self)
-        feature_map = next(map_iter)
-        concat_size = feature_map.output_shape[-1]
-        batch_shape = feature_map.output_shape[:-1]
-        for feature_map in map_iter:
-            concat_size += feature_map.output_shape[-1]
-            batch_shape = torch.broadcast_shapes(
-                batch_shape, feature_map.output_shape[:-1]
-            )
-        return Size((*batch_shape, concat_size))
+        if not self:
+            return Size([])
+        
+        # Find the maximum dimensionality among all feature maps
+        max_ndim = max((len(f.output_shape) for f in self), default=0)
+        if max_ndim == 0:
+            return Size([])
+        
+        # For 1D feature maps only, simple concatenation
+        if max_ndim == 1:
+            return Size([sum(f.output_shape[-1] for f in self)])
+        
+        # For mixed or higher-dimensional maps, handle broadcasting
+        # Initialize result shape with zeros
+        result_shape = [0] * max_ndim
+        
+        for feature_map in self:
+            shape = feature_map.output_shape
+            ndim = len(shape)
+            
+            # For maps with lower dimensionality, they will be expanded
+            # to match higher dimensions, so we need to account for that
+            if ndim < max_ndim:
+                # Lower dimensional maps contribute to concatenation dimension
+                result_shape[-1] += shape[-1] if ndim > 0 else 1
+                # And help determine the shape of non-concatenation dimensions
+                for i in range(max_ndim - 1):
+                    if i < max_ndim - ndim:
+                        # This dimension will be expanded
+                        result_shape[i] = max(result_shape[i], 1)
+                    else:
+                        # This dimension exists in the lower-dim map
+                        idx = i - (max_ndim - ndim)
+                        result_shape[i] = max(result_shape[i], shape[idx])
+            else:
+                # Full dimensionality maps
+                result_shape[-1] += shape[-1]
+                for i in range(max_ndim - 1):
+                    result_shape[i] = max(result_shape[i], shape[i])
+        
+        return Size(result_shape)
 
     @property
     def batch_shape(self) -> Size:
@@ -162,6 +194,27 @@ class DirectSumFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
                 f"Component maps must have the same batch shapes, but {batch_shapes=}."
             )
         return next(iter(batch_shapes)) if batch_shapes else Size([])
+
+
+class SparseDirectSumFeatureMap(DirectSumFeatureMap):
+    def forward(self, x: Tensor, **kwargs: Any) -> Tensor:
+        blocks = []
+        ndim = max(len(f.output_shape) for f in self)
+        for feature_map in self:
+            block = feature_map(x, **kwargs)
+            block_ndim = len(feature_map.output_shape)
+            if block_ndim == ndim:
+                block = block.to_dense() if isinstance(block, LinearOperator) else block
+                block = block if block.is_sparse else block.to_sparse()
+            else:
+                multi_index = (
+                    ...,
+                    *repeat(None, ndim - block_ndim),
+                    *repeat(slice(None), block_ndim),
+                )
+                block = block.to_dense()[multi_index]
+            blocks.append(block)
+        return sparse_block_diag(blocks, base_ndim=ndim)
 
 
 class HadamardProductFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
@@ -191,88 +244,6 @@ class HadamardProductFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
     @property
     def raw_output_shape(self) -> Size:
         return torch.broadcast_shapes(*(f.output_shape for f in self))
-
-    @property
-    def batch_shape(self) -> Size:
-        batch_shapes = (feature_map.batch_shape for feature_map in self)
-        return torch.broadcast_shapes(*batch_shapes)
-
-    @property
-    def device(self) -> torch.device | None:
-        devices = {feature_map.device for feature_map in self}
-        devices.discard(None)
-        if len(devices) > 1:
-            raise UnsupportedError(f"Feature maps must be colocated, but {devices=}.")
-        return next(iter(devices)) if devices else None
-
-    @property
-    def dtype(self) -> torch.dtype | None:
-        dtypes = {feature_map.dtype for feature_map in self}
-        dtypes.discard(None)
-        if len(dtypes) > 1:
-            raise UnsupportedError(
-                f"Feature maps must have the same data type, but {dtypes=}."
-            )
-        return next(iter(dtypes)) if dtypes else None
-
-
-class SparseDirectSumFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
-    r"""Sparse direct sums of features with block diagonal structure."""
-
-    def __init__(
-        self,
-        feature_maps: Iterable[FeatureMap],
-        input_transform: TInputTransform | None = None,
-        output_transform: TOutputTransform | None = None,
-    ):
-        """Initialize a sparse direct sum feature map.
-
-        Args:
-            feature_maps: An iterable of feature maps to combine.
-            input_transform: Optional transform to apply to inputs.
-            output_transform: Optional transform to apply to outputs.
-        """
-        FeatureMap.__init__(self)
-        ModuleListMixin.__init__(self, attr_name="feature_maps", modules=feature_maps)
-        self.input_transform = input_transform
-        self.output_transform = output_transform
-
-    def forward(self, x: Tensor, **kwargs: Any) -> Tensor:
-        blocks = []
-        for feature_map in self:
-            block = feature_map(x, **kwargs).to_dense()
-            blocks.append(block)
-
-        # Create sparse block diagonal structure
-        if len(blocks) == 1:
-            return blocks[0]
-        
-        # For sparse direct sum, we create a block diagonal matrix
-        # where each block corresponds to a feature map's output
-        total_size = sum(block.shape[-1] for block in blocks)
-        batch_shape = blocks[0].shape[:-1]
-        
-        # Initialize output tensor with zeros
-        output = torch.zeros(*batch_shape, total_size, device=x.device, dtype=x.dtype)
-        
-        # Handle matrix-valued outputs by creating block diagonal structure
-        offset = 0
-        for block in blocks:
-            if block.ndim > len(batch_shape) + 1:  # Matrix-valued
-                block_size = block.shape[-1]
-                output[..., offset:offset+block_size, offset:offset+block_size] = block
-                offset += block_size
-            else:  # Vector-valued
-                block_size = block.shape[-1]
-                output[..., offset:offset+block_size] = block
-                offset += block_size
-                
-        return output
-
-    @property
-    def raw_output_shape(self) -> Size:
-        total_size = sum(f.output_shape[-1] for f in self)
-        return Size([total_size])
 
     @property
     def batch_shape(self) -> Size:
@@ -473,6 +444,10 @@ class FourierFeatureMap(KernelFeatureMap):
     ) -> None:
         r"""Initializes a FourierFeatureMap instance.
 
+        .. code-block:: text
+        
+        feature_map(x) = output_transform(input_transform(x)^{T} weight + bias).
+        
         Args:
             kernel: The kernel :math:`k` used to define the feature map.
             weight: A tensor of weights used to linearly combine the module's inputs.
@@ -620,10 +595,27 @@ class MultitaskKernelFeatureMap(KernelFeatureMap):
         """
         data_features = self.data_feature_map(x)
         task_features = self.kernel.task_covar_module.covar_matrix.cholesky()
-        task_features = task_features.expand(
-            *data_features.shape[: max(0, data_features.ndim - task_features.ndim)],
-            *task_features.shape,
-        )
+        
+        # Handle batch dimensions properly
+        # data_features has shape [..., n, d] where ... includes input batch dims + kernel batch dims
+        # task_features has shape [*kernel.batch_shape, num_tasks, num_tasks]
+        # KroneckerProductLinearOperator requires matching batch dimensions
+        
+        # We need to match all batch dimensions except the last 2 (matrix dimensions)
+        # For data_features, the last 2 dims are [n, d]
+        # For task_features, the last 2 dims are [num_tasks, num_tasks]
+        data_batch_shape = data_features.shape[:-2]
+        task_batch_shape = task_features.shape[:-2]
+        
+        # Expand task_features to match data_features batch dimensions
+        if len(data_batch_shape) > len(task_batch_shape):
+            # Add singleton dimensions for the missing batch dims
+            num_missing = len(data_batch_shape) - len(task_batch_shape)
+            for _ in range(num_missing):
+                task_features = task_features.unsqueeze(0)
+            # Now expand to match the full batch shape
+            task_features = task_features.expand(*data_batch_shape, *task_features.shape[-2:])
+        
         return KroneckerProductLinearOperator(data_features, task_features)
 
     @property

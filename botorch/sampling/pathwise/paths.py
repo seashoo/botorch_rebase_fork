@@ -67,6 +67,11 @@ class PathDict(SamplePath, ModuleDictMixin[SamplePath]):
             else self.reducer(outputs)
         )
 
+    @property
+    def paths(self):
+        """Access the internal module dict."""
+        return getattr(self, "_paths_dict")
+
 
 class PathList(SamplePath, ModuleListMixin[SamplePath]):
     r"""A list of SamplePaths."""
@@ -102,6 +107,11 @@ class PathList(SamplePath, ModuleListMixin[SamplePath]):
     def forward(self, x: Tensor, **kwargs: Any) -> Tensor | list[Tensor]:
         outputs = [path(x, **kwargs) for path in self]
         return outputs if self.reducer is None else self.reducer(outputs)
+
+    @property
+    def paths(self):
+        """Access the internal module list."""
+        return getattr(self, "_paths_list")
 
 
 class GeneralizedLinearPath(SamplePath):

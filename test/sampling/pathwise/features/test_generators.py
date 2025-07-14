@@ -87,12 +87,14 @@ class TestGenKernelFeatureMap(BotorchTestCase):
                     self.assertEqual(features.shape, test_shape)
                     covar = kernel(X).to_dense()
 
+                    # Compute the approximation: features @ features.T should approximate covar
+                    approx_covar = features @ features.transpose(-2, -1)
+                    
+                    # Normalize to correlation matrices for comparison
                     istd = covar.diagonal(dim1=-2, dim2=-1).rsqrt()
                     corr = istd.unsqueeze(-1) * covar * istd.unsqueeze(-2)
-                    vec = istd.unsqueeze(-1) * features.to_dense().view(
-                        *covar.shape[:-1], -1
-                    )
-                    est = vec @ vec.transpose(-2, -1)
+                    approx_corr = istd.unsqueeze(-1) * approx_covar * istd.unsqueeze(-2)
+                    
                     allclose_kwargs = {}
                     if not is_finite_dimensional(kernel):
                         num_random_features_per_map = config.num_random_features / (
@@ -108,4 +110,4 @@ class TestGenKernelFeatureMap(BotorchTestCase):
                             slack * num_random_features_per_map**-0.5
                         )
 
-                    self.assertTrue(corr.allclose(est, **allclose_kwargs))
+                    self.assertTrue(corr.allclose(approx_corr, **allclose_kwargs))

@@ -17,7 +17,7 @@ from botorch.utils.testing import BotorchTestCase
 from gpytorch import kernels
 from linear_operator.operators import KroneckerProductLinearOperator
 from torch import Size
-from torch.nn import Module
+from torch.nn import Module, ModuleList
 
 from ..helpers import gen_module, TestCaseConfig
 
@@ -90,13 +90,24 @@ class TestFeatureMaps(BotorchTestCase):
 
         # Test mixture of matrix-valued and vector-valued maps
         real_map = feature_map[0]
-        mock_map = MagicMock(
-            side_effect=lambda x: x.unsqueeze(-1).expand(
-                *real_map.batch_shape, *x.shape, d
-            )
-        )
-        mock_map.output_shape = Size([d, d])
-        with patch.dict(feature_map._modules, {"feature_maps": [mock_map, real_map]}):
+        
+        # Create a proper feature map with 2D output
+        class Mock2DFeatureMap(maps.FeatureMap):
+            def __init__(self, d, batch_shape):
+                super().__init__()
+                self.raw_output_shape = Size([d, d])
+                self.batch_shape = batch_shape
+                self.input_transform = None
+                self.output_transform = None
+                self.device = real_map.device
+                self.dtype = real_map.dtype
+                self.d = d
+            
+            def forward(self, x):
+                return x.unsqueeze(-1).expand(*self.batch_shape, *x.shape, self.d)
+        
+        mock_map = Mock2DFeatureMap(d, real_map.batch_shape)
+        with patch.dict(feature_map._modules, {"_feature_maps_list": ModuleList([mock_map, real_map])}):
             self.assertEqual(
                 feature_map.output_shape, Size([d, d + real_map.output_shape[0]])
             )
@@ -150,13 +161,24 @@ class TestFeatureMaps(BotorchTestCase):
 
         # Test mixture of matrix-valued and vector-valued maps
         real_map = feature_map[0]
-        mock_map = MagicMock(
-            side_effect=lambda x: x.unsqueeze(-1).expand(
-                *real_map.batch_shape, *x.shape, d
-            )
-        )
-        mock_map.output_shape = Size([d, d])
-        with patch.dict(feature_map._modules, {"feature_maps": [mock_map, real_map]}):
+        
+        # Create a proper feature map with 2D output
+        class Mock2DFeatureMap(maps.FeatureMap):
+            def __init__(self, d, batch_shape):
+                super().__init__()
+                self.raw_output_shape = Size([d, d])
+                self.batch_shape = batch_shape
+                self.input_transform = None
+                self.output_transform = None
+                self.device = real_map.device
+                self.dtype = real_map.dtype
+                self.d = d
+            
+            def forward(self, x):
+                return x.unsqueeze(-1).expand(*self.batch_shape, *x.shape, self.d)
+        
+        mock_map = Mock2DFeatureMap(d, real_map.batch_shape)
+        with patch.dict(feature_map._modules, {"_feature_maps_list": ModuleList([mock_map, real_map])}):
             self.assertEqual(
                 feature_map.output_shape, Size([d, d + real_map.output_shape[0]])
             )

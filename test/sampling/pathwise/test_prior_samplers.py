@@ -31,7 +31,7 @@ class TestDrawKernelFeaturePaths(BotorchTestCase):
 
         self.base_models = [
             (batch_config, gen_module(models.SingleTaskGP, batch_config)),
-            (batch_config, gen_module(models.SingleTaskGP, batch_config)),
+            (batch_config, gen_module("FixedNoiseGP", batch_config)),
             (batch_config, gen_module(models.MultiTaskGP, batch_config)),
             (config, gen_module(models.SingleTaskVariationalGP, config)),
         ]
