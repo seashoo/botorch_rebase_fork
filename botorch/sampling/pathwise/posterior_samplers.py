@@ -55,7 +55,7 @@ class MatheronPath(PathDict):
     r"""Represents function draws from a GP posterior via Matheron's rule:
 
     .. code-block:: text
-    
+
               "Prior path"
                    v
     (f | y)(·) = f(·) + Cov(f(·), y) Cov(y, y)^{-1} (y - f(X) - ε),

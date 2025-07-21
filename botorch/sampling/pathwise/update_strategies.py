@@ -50,7 +50,7 @@ def gaussian_update(
     r"""Computes a Gaussian pathwise update in exact arithmetic:
 
      .. code-block:: text
-     
+
         (f | y)(·) = f(·) + Cov(f(·), y) Cov(y, y)^{-1} (y - f(X) - ε),
                             \_______________________________________/
                                                 V

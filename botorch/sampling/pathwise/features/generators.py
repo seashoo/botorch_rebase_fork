@@ -48,7 +48,8 @@ from torch.distributions import Gamma
 r"""Type definition for feature map generators.
 
 A callable that takes a kernel and dimension parameters and returns a feature map
-:math:`\phi: \mathcal{X} \to \mathbb{R}^{n}` such that :math:`k(x, x') ≈ \phi(x)^{T} \phi(x')`.
+:math:`\phi: \mathcal{X} \to \mathbb{R}^{n}` such that
+:math:`k(x, x') ≈ \phi(x)^{T} \phi(x')`.
 
 Args:
     kernel: The kernel :math:`k` to be represented via a feature map.
@@ -105,7 +106,7 @@ def _gen_fourier_features(
 ) -> FourierFeatureMap:
     r"""Generate a feature map :math:`\phi: \mathcal{X} \to \mathbb{R}^{n}` that
     approximates a stationary kernel so that :math:`k(x, x') ≈ \phi(x)^\top \phi(x')`.
-    
+
     For stationary kernels :math:`k(x, x') = k(x - x')`, uses random Fourier features
     to construct the approximation. When :code:`cosine_only=False`, uses paired sine and
     cosine features. When :code:`cosine_only=True`, uses cosine features with random
@@ -179,6 +180,7 @@ def _gen_kernel_feature_map_rbf(
 
     References: [rahimi2007random]_
     """
+
     def _weight_generator(shape: Size) -> Tensor:
         try:
             n, d = shape
@@ -219,6 +221,7 @@ def _gen_kernel_feature_map_matern(
 
     References: [rahimi2007random]_
     """
+
     def _weight_generator(shape: Size) -> Tensor:
         try:
             n, d = shape
@@ -417,7 +420,9 @@ def _gen_kernel_feature_map_linear(
         num_inputs: The number of input features.
         **ignore: Additional arguments (ignored).
     """
-    num_features = get_kernel_num_inputs(kernel=kernel, num_ambient_inputs=num_ambient_inputs or num_inputs)
+    num_features = get_kernel_num_inputs(
+        kernel=kernel, num_ambient_inputs=num_ambient_inputs or num_inputs
+    )
     return LinearKernelFeatureMap(kernel=kernel, raw_output_shape=Size([num_features]))
 
 
@@ -451,7 +456,8 @@ def _gen_kernel_feature_map_lcm(
 
     Args:
         kernel: The LCMKernel to generate features for.
-        **kwargs: Additional arguments passed to :func:`_gen_kernel_feature_map_additive`.
+        **kwargs: Additional arguments passed to
+            :func:`_gen_kernel_feature_map_additive`.
     """
     return _gen_kernel_feature_map_additive(
         kernel=kernel, sub_kernels=kernel.covar_module_list, **kwargs

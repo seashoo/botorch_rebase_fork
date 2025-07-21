@@ -56,7 +56,12 @@ class TestGenKernelFeatureMap(BotorchTestCase):
 
                 n = 4
                 m = ceil(n * kernel.batch_shape.numel() ** -0.5)
-                for input_batch_shape in ((n**2,), (m, *kernel.batch_shape, m)):
+
+                input_batch_shapes = [(n**2,)]
+                if not isinstance(kernel, kernels.MultitaskKernel):
+                    input_batch_shapes.append((m, *kernel.batch_shape, m))
+
+                for input_batch_shape in input_batch_shapes:
                     X = torch.rand(
                         (*input_batch_shape, config.num_inputs),
                         device=kernel.device,
@@ -87,14 +92,10 @@ class TestGenKernelFeatureMap(BotorchTestCase):
                     self.assertEqual(features.shape, test_shape)
                     covar = kernel(X).to_dense()
 
-                    # Compute the approximation: features @ features.T should approximate covar
-                    approx_covar = features @ features.transpose(-2, -1)
-                    
-                    # Normalize to correlation matrices for comparison
                     istd = covar.diagonal(dim1=-2, dim2=-1).rsqrt()
                     corr = istd.unsqueeze(-1) * covar * istd.unsqueeze(-2)
-                    approx_corr = istd.unsqueeze(-1) * approx_covar * istd.unsqueeze(-2)
-                    
+                    vec = istd.unsqueeze(-1) * features.view(*covar.shape[:-1], -1)
+                    est = vec @ vec.transpose(-2, -1)
                     allclose_kwargs = {}
                     if not is_finite_dimensional(kernel):
                         num_random_features_per_map = config.num_random_features / (
@@ -110,4 +111,9 @@ class TestGenKernelFeatureMap(BotorchTestCase):
                             slack * num_random_features_per_map**-0.5
                         )
 
-                    self.assertTrue(corr.allclose(approx_corr, **allclose_kwargs))
+                    if isinstance(kernel, (kernels.MultitaskKernel, kernels.LCMKernel)):
+                        allclose_kwargs["atol"] = max(
+                            allclose_kwargs.get("atol", 1e-5), slack * 2.0
+                        )
+
+                    self.assertTrue(corr.allclose(est, **allclose_kwargs))

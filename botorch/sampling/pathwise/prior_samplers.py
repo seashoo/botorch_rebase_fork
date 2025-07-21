@@ -73,8 +73,8 @@ def _draw_kernel_feature_paths_fallback(
         sample_shape: The shape of the sample paths to be drawn.
         map_generator: A callable that generates feature maps from kernels.
             Defaults to :func:`gen_kernel_feature_map`.
-        input_transform: Optional transform applied to inputs before feature generation.
-        output_transform: Optional transform applied to outputs after feature generation.
+        input_transform: Optional transform applied to input before feature generation.
+        output_transform: Optional transform applied to output after feature generation.
         weight_generator: Optional callable to generate random weights. If None,
             uses Sobol sequences to generate normally distributed weights.
         **kwargs: Additional arguments passed to :func:`map_generator`.
@@ -144,7 +144,7 @@ def _draw_kernel_feature_paths_MultiTaskGP(
         else model._task_feature
     )
 
-    # NOTE: May want to use a `ProductKernel` instead in `MultiTaskGP` 
+    # NOTE: May want to use a `ProductKernel` instead in `MultiTaskGP`
     base_kernel = deepcopy(model.covar_module)
     base_kernel.active_dims = torch.LongTensor(
         [index for index in range(train_X.shape[-1]) if index != task_index],

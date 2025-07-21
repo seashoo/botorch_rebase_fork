@@ -62,9 +62,7 @@ class PathDict(SamplePath, ModuleDictMixin[SamplePath]):
     def forward(self, x: Tensor, **kwargs: Any) -> Tensor | dict[str, Tensor]:
         outputs = [path(x, **kwargs) for path in self.values()]
         return (
-            dict(zip(self, outputs))
-            if self.reducer is None
-            else self.reducer(outputs)
+            dict(zip(self, outputs)) if self.reducer is None else self.reducer(outputs)
         )
 
     @property

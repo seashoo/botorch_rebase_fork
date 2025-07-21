@@ -7,16 +7,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import (
-    Any,
-    Callable,
-    Generic,
-    Iterable,
-    Iterator,
-    Mapping,
-    Tuple,
-    TypeVar,
-)
+from typing import Any, Callable, Generic, Iterable, Iterator, Mapping, Tuple, TypeVar
 
 from botorch.models.transforms.input import InputTransform
 from botorch.models.transforms.outcome import OutcomeTransform
@@ -106,13 +97,13 @@ class ModuleDictMixin(ABC, Generic[TModule]):
         """
         # Use a unique name to avoid conflicts with existing attributes
         self.__module_dict_name = f"_{attr_name}_dict"
-        
+
         # If modules is already a ModuleDict, reuse it; otherwise create new one
         if isinstance(modules, ModuleDict):
             module_dict = modules
         else:
             module_dict = ModuleDict({} if modules is None else modules)
-        
+
         # Register the ModuleDict
         self.register_module(self.__module_dict_name, module_dict)
 
@@ -179,13 +170,13 @@ class ModuleListMixin(ABC, Generic[TModule]):
         """
         # Use a unique name to avoid conflicts with existing attributes
         self.__module_list_name = f"_{attr_name}_list"
-        
+
         # If modules is already a ModuleList, reuse it; otherwise create new one
         if isinstance(modules, ModuleList):
             module_list = modules
         else:
             module_list = ModuleList([] if modules is None else modules)
-        
+
         # Register the ModuleList
         self.register_module(self.__module_list_name, module_list)
 

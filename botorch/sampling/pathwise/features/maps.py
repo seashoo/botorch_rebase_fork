@@ -146,24 +146,24 @@ class DirectSumFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
     def raw_output_shape(self) -> Size:
         if not self:
             return Size([])
-        
+
         # Find the maximum dimensionality among all feature maps
         max_ndim = max((len(f.output_shape) for f in self), default=0)
         if max_ndim == 0:
             return Size([])
-        
+
         # For 1D feature maps only, simple concatenation
         if max_ndim == 1:
             return Size([sum(f.output_shape[-1] for f in self)])
-        
+
         # For mixed or higher-dimensional maps, handle broadcasting
         # Initialize result shape with zeros
         result_shape = [0] * max_ndim
-        
+
         for feature_map in self:
             shape = feature_map.output_shape
             ndim = len(shape)
-            
+
             # For maps with lower dimensionality, they will be expanded
             # to match higher dimensions, so we need to account for that
             if ndim < max_ndim:
@@ -183,7 +183,7 @@ class DirectSumFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
                 result_shape[-1] += shape[-1]
                 for i in range(max_ndim - 1):
                     result_shape[i] = max(result_shape[i], shape[i])
-        
+
         return Size(result_shape)
 
     @property
@@ -445,9 +445,9 @@ class FourierFeatureMap(KernelFeatureMap):
         r"""Initializes a FourierFeatureMap instance.
 
         .. code-block:: text
-        
+
         feature_map(x) = output_transform(input_transform(x)^{T} weight + bias).
-        
+
         Args:
             kernel: The kernel :math:`k` used to define the feature map.
             weight: A tensor of weights used to linearly combine the module's inputs.
@@ -589,34 +589,17 @@ class MultitaskKernelFeatureMap(KernelFeatureMap):
         )
         self.data_feature_map = data_feature_map
 
-    def forward(self, x: Tensor) -> KroneckerProductLinearOperator | Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         r"""Returns the Kronecker product of the square root task covariance matrix
         and a feature-map-based representation of :code:`data_covar_module`.
         """
         data_features = self.data_feature_map(x)
         task_features = self.kernel.task_covar_module.covar_matrix.cholesky()
-        
-        # Handle batch dimensions properly
-        # data_features has shape [..., n, d] where ... includes input batch dims + kernel batch dims
-        # task_features has shape [*kernel.batch_shape, num_tasks, num_tasks]
-        # KroneckerProductLinearOperator requires matching batch dimensions
-        
-        # We need to match all batch dimensions except the last 2 (matrix dimensions)
-        # For data_features, the last 2 dims are [n, d]
-        # For task_features, the last 2 dims are [num_tasks, num_tasks]
-        data_batch_shape = data_features.shape[:-2]
-        task_batch_shape = task_features.shape[:-2]
-        
-        # Expand task_features to match data_features batch dimensions
-        if len(data_batch_shape) > len(task_batch_shape):
-            # Add singleton dimensions for the missing batch dims
-            num_missing = len(data_batch_shape) - len(task_batch_shape)
-            for _ in range(num_missing):
-                task_features = task_features.unsqueeze(0)
-            # Now expand to match the full batch shape
-            task_features = task_features.expand(*data_batch_shape, *task_features.shape[-2:])
-        
-        return KroneckerProductLinearOperator(data_features, task_features)
+        task_features = task_features.expand(
+            *data_features.shape[: max(0, data_features.ndim - task_features.ndim)],
+            *task_features.shape,
+        )
+        return KroneckerProductLinearOperator(data_features, task_features).to_dense()
 
     @property
     def num_tasks(self) -> int:

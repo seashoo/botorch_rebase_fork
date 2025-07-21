@@ -7,16 +7,7 @@
 from __future__ import annotations
 
 from sys import maxsize
-from typing import (
-    Callable,
-    Iterable,
-    Iterator,
-    List,
-    overload,
-    Tuple,
-    Type,
-    TypeVar,
-)
+from typing import Callable, Iterable, Iterator, List, overload, Tuple, Type, TypeVar
 
 import torch
 from botorch.models.approximate_gp import SingleTaskVariationalGP
@@ -40,7 +31,11 @@ from torch import Size, Tensor
 TKernel = TypeVar("TKernel", bound=Kernel)
 GetTrainInputs = Dispatcher("get_train_inputs")
 GetTrainTargets = Dispatcher("get_train_targets")
-INF_DIM_KERNELS: Tuple[Type[Kernel], ...] = (kernels.MaternKernel, kernels.RBFKernel)
+INF_DIM_KERNELS: Tuple[Type[Kernel], ...] = (
+    kernels.MaternKernel,
+    kernels.RBFKernel,
+    kernels.MultitaskKernel,
+)
 
 
 def kernel_instancecheck(

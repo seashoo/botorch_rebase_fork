@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from math import prod
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import torch
 from botorch.sampling.pathwise.features import maps
@@ -90,7 +90,7 @@ class TestFeatureMaps(BotorchTestCase):
 
         # Test mixture of matrix-valued and vector-valued maps
         real_map = feature_map[0]
-        
+
         # Create a proper feature map with 2D output
         class Mock2DFeatureMap(maps.FeatureMap):
             def __init__(self, d, batch_shape):
@@ -102,12 +102,15 @@ class TestFeatureMaps(BotorchTestCase):
                 self.device = real_map.device
                 self.dtype = real_map.dtype
                 self.d = d
-            
+
             def forward(self, x):
                 return x.unsqueeze(-1).expand(*self.batch_shape, *x.shape, self.d)
-        
+
         mock_map = Mock2DFeatureMap(d, real_map.batch_shape)
-        with patch.dict(feature_map._modules, {"_feature_maps_list": ModuleList([mock_map, real_map])}):
+        with patch.dict(
+            feature_map._modules,
+            {"_feature_maps_list": ModuleList([mock_map, real_map])},
+        ):
             self.assertEqual(
                 feature_map.output_shape, Size([d, d + real_map.output_shape[0]])
             )
@@ -161,7 +164,7 @@ class TestFeatureMaps(BotorchTestCase):
 
         # Test mixture of matrix-valued and vector-valued maps
         real_map = feature_map[0]
-        
+
         # Create a proper feature map with 2D output
         class Mock2DFeatureMap(maps.FeatureMap):
             def __init__(self, d, batch_shape):
@@ -173,12 +176,15 @@ class TestFeatureMaps(BotorchTestCase):
                 self.device = real_map.device
                 self.dtype = real_map.dtype
                 self.d = d
-            
+
             def forward(self, x):
                 return x.unsqueeze(-1).expand(*self.batch_shape, *x.shape, self.d)
-        
+
         mock_map = Mock2DFeatureMap(d, real_map.batch_shape)
-        with patch.dict(feature_map._modules, {"_feature_maps_list": ModuleList([mock_map, real_map])}):
+        with patch.dict(
+            feature_map._modules,
+            {"_feature_maps_list": ModuleList([mock_map, real_map])},
+        ):
             self.assertEqual(
                 feature_map.output_shape, Size([d, d + real_map.output_shape[0]])
             )

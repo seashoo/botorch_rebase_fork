@@ -40,6 +40,11 @@ class TestCaseConfig:
 
 class FactoryFunctionRegistry:
     def __init__(self, factories: Optional[Dict[T, TFactory]] = None):
+        """Initialize the factory function registry.
+
+        Args:
+            factories: Optional dictionary mapping types to factory functions.
+        """
         self.factories = {} if factories is None else factories
 
     def register(self, typ: T, **kwargs: Any) -> None:
@@ -71,7 +76,7 @@ def gen_random_inputs(
     task_id: Optional[int] = None,
     seed: Optional[int] = None,
 ) -> torch.Tensor:
-    with (nullcontext() if seed is None else torch.random.fork_rng()):
+    with nullcontext() if seed is None else torch.random.fork_rng():
         if seed:
             torch.random.manual_seed(seed)
 
@@ -101,7 +106,7 @@ def _randomize_lengthscales(
     if kernel.ard_num_dims is None:
         raise NotImplementedError
 
-    with (nullcontext() if seed is None else torch.random.fork_rng()):
+    with nullcontext() if seed is None else torch.random.fork_rng():
         if seed:
             torch.random.manual_seed(seed)
 
@@ -254,17 +259,19 @@ def _gen_fixed_noise_gp(config: TestCaseConfig, **kwargs: Any) -> models.SingleT
     tkwargs = {"device": config.device, "dtype": config.dtype}
     with torch.random.fork_rng():
         torch.random.manual_seed(config.seed)
-        covar_module = kwargs.get("covar_module") or gen_module(kernels.MaternKernel, config)
+        covar_module = kwargs.get("covar_module") or gen_module(
+            kernels.MaternKernel, config
+        )
         uppers = 1 + 9 * torch.rand(d, **tkwargs)
         bounds = pad(uppers.unsqueeze(0), (0, 0, 1, 0))
         X = uppers * torch.rand(n, d, **tkwargs)
         Y = X @ torch.randn(*config.batch_shape, d, 1, **tkwargs)
         if config.batch_shape:
             Y = Y.squeeze(-1).transpose(-2, -1)
-        
+
         # Generate fixed noise
         train_Yvar = 0.1 * torch.rand_like(Y, **tkwargs)
-        
+
         model = models.SingleTaskGP(
             train_X=X,
             train_Y=Y,
@@ -273,7 +280,7 @@ def _gen_fixed_noise_gp(config: TestCaseConfig, **kwargs: Any) -> models.SingleT
             input_transform=Normalize(d=X.shape[-1], bounds=bounds),
             outcome_transform=Standardize(m=Y.shape[-1]),
         )
-    
+
     return model.to(**tkwargs)
 
 
