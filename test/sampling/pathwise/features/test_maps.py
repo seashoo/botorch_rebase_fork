@@ -432,6 +432,14 @@ class TestKernelFeatureMaps(BotorchTestCase):
         self.assertIsNone(empty_outer.device)
         self.assertIsNone(empty_outer.dtype)
         
+        # Test KernelEvaluationMap dimension mismatch error
+        kernel = gen_module(kernels.RBFKernel, self.configs[0])
+        # Create points with wrong number of dimensions
+        bad_points = torch.rand(self.configs[0].num_inputs, device=self.device)  # 1D instead of 2D
+        
+        with self.assertRaisesRegex(RuntimeError, "Dimension mismatch"):
+            maps.KernelEvaluationMap(kernel=kernel, points=bad_points)
+            
         # Test KernelEvaluationMap shape mismatch error
         kernel = gen_module(kernels.RBFKernel, self.configs[0])
         # Points with incompatible batch shape
@@ -451,6 +459,22 @@ class TestKernelFeatureMaps(BotorchTestCase):
         expected = index_kernel.covar_matrix.cholesky()
         self.assertTrue(result.to_dense().allclose(expected.to_dense()))
         
+        # Test IndexKernelFeatureMap with wrong kernel type
+        rbf_kernel = gen_module(kernels.RBFKernel, self.configs[0])
+        with self.assertRaisesRegex(ValueError, "Expected.*IndexKernel"):
+            maps.IndexKernelFeatureMap(kernel=rbf_kernel)
+            
+        # Test LinearKernelFeatureMap with wrong kernel type
+        rbf_kernel = gen_module(kernels.RBFKernel, self.configs[0])
+        with self.assertRaisesRegex(ValueError, "Expected.*LinearKernel"):
+            maps.LinearKernelFeatureMap(kernel=rbf_kernel, raw_output_shape=Size([3]))
+            
+        # Test MultitaskKernelFeatureMap with wrong kernel type
+        rbf_kernel = gen_module(kernels.RBFKernel, self.configs[0])
+        data_map = gen_kernel_feature_map(rbf_kernel)
+        with self.assertRaisesRegex(ValueError, "Expected.*MultitaskKernel"):
+            maps.MultitaskKernelFeatureMap(kernel=rbf_kernel, data_feature_map=data_map)
+        
         # Test FeatureMapList with device/dtype conflicts
         class DeviceFeatureMap(maps.FeatureMap):
             def __init__(self, device):
@@ -465,12 +489,18 @@ class TestKernelFeatureMaps(BotorchTestCase):
             def forward(self, x):
                 return torch.randn(x.shape[0], 3, device=self.device, dtype=self.dtype)
         
-        # Test multiple devices error
+        # Force device mismatch for FeatureMapList
         device_map1 = DeviceFeatureMap(torch.device('cpu'))
         device_map2 = DeviceFeatureMap(torch.device('cpu'))
-        device_map2.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        # Create a fake device to force mismatch
+        fake_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if not torch.cuda.is_available():
+            # Force different device by creating a mock device
+            device_map2.device = 'fake_device'
+        else:
+            device_map2.device = fake_device
         
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() or device_map2.device != device_map1.device:
             device_list = maps.FeatureMapList([device_map1, device_map2])
             with self.assertRaisesRegex(UnsupportedError, "must be colocated"):
                 _ = device_list.device
@@ -484,7 +514,7 @@ class TestKernelFeatureMaps(BotorchTestCase):
         with self.assertRaisesRegex(UnsupportedError, "must have the same data type"):
             _ = dtype_list.dtype
             
-        # Test DirectSumFeatureMap with mixed dimensions - test the else branch
+        # Test DirectSumFeatureMap with mixed dimensions
         class MixedDimFeatureMap(maps.FeatureMap):
             def __init__(self, output_shape):
                 super().__init__()
@@ -508,12 +538,16 @@ class TestKernelFeatureMaps(BotorchTestCase):
         self.assertEqual(len(shape), 2)  # Should have 2 dimensions
         self.assertEqual(shape[-1], 3 + 4)  # Concatenation dimension
         
-        # Test HadamardProductFeatureMap device/dtype conflicts
+        # Force device mismatch for HadamardProductFeatureMap
         hadamard_map1 = DeviceFeatureMap(torch.device('cpu'))
         hadamard_map2 = DeviceFeatureMap(torch.device('cpu'))
-        hadamard_map2.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        fake_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if not torch.cuda.is_available():
+            hadamard_map2.device = 'fake_device'
+        else:
+            hadamard_map2.device = fake_device
         
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() or hadamard_map2.device != hadamard_map1.device:
             hadamard_list = maps.HadamardProductFeatureMap([hadamard_map1, hadamard_map2])
             with self.assertRaisesRegex(UnsupportedError, "must be colocated"):
                 _ = hadamard_list.device
@@ -524,12 +558,16 @@ class TestKernelFeatureMaps(BotorchTestCase):
         with self.assertRaisesRegex(UnsupportedError, "must have the same data type"):
             _ = hadamard_dtype_list.dtype
             
-        # Test OuterProductFeatureMap device/dtype conflicts
+        # Force device mismatch for OuterProductFeatureMap
         outer_map1 = DeviceFeatureMap(torch.device('cpu'))
         outer_map2 = DeviceFeatureMap(torch.device('cpu'))
-        outer_map2.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        fake_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if not torch.cuda.is_available():
+            outer_map2.device = 'fake_device'
+        else:
+            outer_map2.device = fake_device
         
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() or outer_map2.device != outer_map1.device:
             outer_list = maps.OuterProductFeatureMap([outer_map1, outer_map2])
             with self.assertRaisesRegex(UnsupportedError, "must be colocated"):
                 _ = outer_list.device
