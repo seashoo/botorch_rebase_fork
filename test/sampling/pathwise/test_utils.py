@@ -150,3 +150,124 @@ class TestGetters(BotorchTestCase):
             self.assertEqual(len(target_list), len(self.models))
             for model, Y in zip(self.models, target_list):
                 self.assertTrue(Y.equal(get_train_targets(model)))
+
+
+class TestUtilsHelpers(BotorchTestCase):
+    def setUp(self):
+        super().setUp()
+        with torch.random.fork_rng():
+            torch.random.manual_seed(0)
+            train_X = torch.rand(5, 2)
+            train_Y = torch.randn(5, 2)
+
+        self.models = []
+        for num_outputs in (1, 2):
+            self.models.append(
+                SingleTaskGP(
+                    train_X=train_X,
+                    train_Y=train_Y[:, :num_outputs],
+                    input_transform=Normalize(d=2),
+                    outcome_transform=Standardize(m=num_outputs),
+                )
+            )
+
+            self.models.append(
+                SingleTaskVariationalGP(
+                    train_X=train_X,
+                    train_Y=train_Y[:, :num_outputs],
+                    input_transform=Normalize(d=2),
+                    outcome_transform=Standardize(m=num_outputs),
+                )
+            )
+
+    def test_sparse_block_diag_with_linear_operator(self):
+        """Test sparse_block_diag with LinearOperator input - covers line 108"""
+        from botorch.sampling.pathwise.utils.helpers import sparse_block_diag
+        from linear_operator.operators import DiagLinearOperator
+        
+        # Create a LinearOperator block
+        diag_values = torch.tensor([1.0, 2.0, 3.0])
+        linear_op_block = DiagLinearOperator(diag_values)
+        
+        # Create a regular tensor block
+        tensor_block = torch.tensor([[4.0, 5.0], [6.0, 7.0]])
+        
+        # Test with LinearOperator in blocks
+        blocks = [linear_op_block, tensor_block]
+        result = sparse_block_diag(blocks)
+        
+        # Verify the result
+        self.assertTrue(result.is_sparse)
+        dense_result = result.to_dense()
+        
+        # Check that the blocks are arranged diagonally
+        expected_shape = (5, 5)  # 3x3 + 2x2
+        self.assertEqual(dense_result.shape, expected_shape)
+
+    def test_untransform_shape_with_input_transform(self):
+        """Test untransform_shape with InputTransform - covers line 142"""
+        from botorch.sampling.pathwise.utils.helpers import untransform_shape
+        from botorch.models.transforms.input import Normalize
+        
+        # Create an InputTransform
+        transform = Normalize(d=2)
+        
+        # Create a test shape
+        shape = torch.Size([10, 2])
+        
+        # Test the untransform_shape function
+        result_shape = untransform_shape(transform, shape)
+        
+        # Should return the same shape since InputTransform doesn't change dimensionality
+        self.assertEqual(result_shape, shape)
+
+    def test_get_kernel_num_inputs_error_case(self):
+        """Test get_kernel_num_inputs error case - covers lines 209-214"""
+        from botorch.sampling.pathwise.utils.helpers import get_kernel_num_inputs
+        from gpytorch.kernels import RBFKernel
+        
+        # Create a kernel with no active_dims or ard_num_dims
+        kernel = RBFKernel()
+        
+        # Test the error case
+        with self.assertRaisesRegex(ValueError, "`num_ambient_inputs` must be passed"):
+            get_kernel_num_inputs(kernel, num_ambient_inputs=None)
+
+    def test_get_train_inputs_original_train_inputs(self):
+        """Test _get_train_inputs_Model with _original_train_inputs - covers lines 182, 186-188"""
+        from botorch.sampling.pathwise.utils.helpers import get_train_inputs
+        from unittest.mock import patch
+        
+        # Use one of the models from setUp
+        model = self.models[0]
+        
+        # Create a mock _original_train_inputs
+        original_X = torch.rand(5, 2)
+        
+        # Test with _original_train_inputs set and transformed=False
+        with patch.object(model, '_original_train_inputs', original_X):
+            result = get_train_inputs(model, transformed=False)
+            self.assertTrue(result[0].equal(original_X))
+
+    def test_get_train_targets_multitask_variational(self):
+        """Test _get_train_targets_SingleTaskVariationalGP with multitask - covers line 190"""
+        from botorch.sampling.pathwise.utils.helpers import get_train_targets
+        from botorch.models import SingleTaskVariationalGP
+        
+        # Create a variational model with multiple outputs
+        with torch.random.fork_rng():
+            torch.random.manual_seed(0)
+            train_X = torch.rand(5, 2)
+            train_Y = torch.randn(5, 2)  # 2 outputs
+            
+        variational_model = SingleTaskVariationalGP(
+            train_X=train_X,
+            train_Y=train_Y,
+            outcome_transform=Standardize(m=2),
+        )
+        
+        # This should test the multitask branch (num_outputs > 1)
+        result = get_train_targets(variational_model, transformed=False)
+        self.assertIsInstance(result, torch.Tensor)
+        # Check that the result has the correct shape
+        self.assertEqual(result.shape, train_Y.shape)

@@ -450,3 +450,92 @@ class TestKernelFeatureMaps(BotorchTestCase):
         # Should return Cholesky of covar_matrix
         expected = index_kernel.covar_matrix.cholesky()
         self.assertTrue(result.to_dense().allclose(expected.to_dense()))
+        
+        # Test FeatureMapList with device/dtype conflicts
+        class DeviceFeatureMap(maps.FeatureMap):
+            def __init__(self, device):
+                super().__init__()
+                self.raw_output_shape = Size([3])
+                self.batch_shape = Size([])
+                self.device = device
+                self.dtype = torch.float32
+                self.input_transform = None
+                self.output_transform = None
+                
+            def forward(self, x):
+                return torch.randn(x.shape[0], 3, device=self.device, dtype=self.dtype)
+        
+        # Test multiple devices error
+        device_map1 = DeviceFeatureMap(torch.device('cpu'))
+        device_map2 = DeviceFeatureMap(torch.device('cpu'))
+        device_map2.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        
+        if torch.cuda.is_available():
+            device_list = maps.FeatureMapList([device_map1, device_map2])
+            with self.assertRaisesRegex(UnsupportedError, "must be colocated"):
+                _ = device_list.device
+        
+        # Test multiple dtypes error
+        dtype_map1 = DeviceFeatureMap(torch.device('cpu'))
+        dtype_map2 = DeviceFeatureMap(torch.device('cpu'))
+        dtype_map2.dtype = torch.float64
+        
+        dtype_list = maps.FeatureMapList([dtype_map1, dtype_map2])
+        with self.assertRaisesRegex(UnsupportedError, "must have the same data type"):
+            _ = dtype_list.dtype
+            
+        # Test DirectSumFeatureMap with mixed dimensions - test the else branch
+        class MixedDimFeatureMap(maps.FeatureMap):
+            def __init__(self, output_shape):
+                super().__init__()
+                self.raw_output_shape = output_shape
+                self.batch_shape = Size([])
+                self.input_transform = None
+                self.output_transform = None
+                self.device = torch.device('cpu')
+                self.dtype = torch.float32
+                
+            def forward(self, x):
+                return torch.randn(x.shape[0], *self.raw_output_shape)
+        
+        # Create maps with different dimensions to test the else branch in raw_output_shape
+        mixed_map1 = MixedDimFeatureMap(Size([2, 3]))  # 2D output
+        mixed_map2 = MixedDimFeatureMap(Size([4]))     # 1D output
+        
+        mixed_direct_sum = maps.DirectSumFeatureMap([mixed_map1, mixed_map2])
+        # This should trigger the else branch in raw_output_shape calculation
+        shape = mixed_direct_sum.raw_output_shape
+        self.assertEqual(len(shape), 2)  # Should have 2 dimensions
+        self.assertEqual(shape[-1], 3 + 4)  # Concatenation dimension
+        
+        # Test HadamardProductFeatureMap device/dtype conflicts
+        hadamard_map1 = DeviceFeatureMap(torch.device('cpu'))
+        hadamard_map2 = DeviceFeatureMap(torch.device('cpu'))
+        hadamard_map2.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        
+        if torch.cuda.is_available():
+            hadamard_list = maps.HadamardProductFeatureMap([hadamard_map1, hadamard_map2])
+            with self.assertRaisesRegex(UnsupportedError, "must be colocated"):
+                _ = hadamard_list.device
+        
+        hadamard_map2.device = torch.device('cpu')
+        hadamard_map2.dtype = torch.float64
+        hadamard_dtype_list = maps.HadamardProductFeatureMap([hadamard_map1, hadamard_map2])
+        with self.assertRaisesRegex(UnsupportedError, "must have the same data type"):
+            _ = hadamard_dtype_list.dtype
+            
+        # Test OuterProductFeatureMap device/dtype conflicts
+        outer_map1 = DeviceFeatureMap(torch.device('cpu'))
+        outer_map2 = DeviceFeatureMap(torch.device('cpu'))
+        outer_map2.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        
+        if torch.cuda.is_available():
+            outer_list = maps.OuterProductFeatureMap([outer_map1, outer_map2])
+            with self.assertRaisesRegex(UnsupportedError, "must be colocated"):
+                _ = outer_list.device
+        
+        outer_map2.device = torch.device('cpu')
+        outer_map2.dtype = torch.float64
+        outer_dtype_list = maps.OuterProductFeatureMap([outer_map1, outer_map2])
+        with self.assertRaisesRegex(UnsupportedError, "must have the same data type"):
+            _ = outer_dtype_list.dtype

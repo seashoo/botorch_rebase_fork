@@ -10,6 +10,7 @@ from math import ceil
 from typing import List, Tuple
 
 import torch
+from botorch.exceptions.errors import UnsupportedError
 from botorch.sampling.pathwise.features.generators import gen_kernel_feature_map
 from botorch.sampling.pathwise.utils import is_finite_dimensional, kernel_instancecheck
 from botorch.utils.testing import BotorchTestCase
@@ -117,3 +118,109 @@ class TestGenKernelFeatureMap(BotorchTestCase):
                         )
 
                     self.assertTrue(corr.allclose(est, **allclose_kwargs))
+
+    def test_cosine_only_fourier_features(self):
+        """Test the cosine_only=True branch in _gen_fourier_features"""
+        config = TestCaseConfig(
+            seed=0,
+            device=self.device,
+            num_inputs=2,
+            num_random_features=64,
+        )
+        
+        # Test RBF kernel with cosine_only=True
+        kernel = gen_module(kernels.RBFKernel, config)
+        feature_map = gen_kernel_feature_map(
+            kernel,
+            num_ambient_inputs=config.num_inputs,
+            num_random_features=config.num_random_features,
+            cosine_only=True,
+        )
+        
+        # Verification
+        X = torch.rand(10, config.num_inputs, device=kernel.device, dtype=kernel.dtype)
+        features = feature_map(X)
+        self.assertEqual(features.shape[-1], config.num_random_features)
+
+    def test_cosine_only_branch_coverage(self):
+        """Test cosine_only branches to improve coverage"""
+        config = TestCaseConfig(seed=0, device=self.device, num_inputs=2)
+        
+        # Test with cosine_only=True to cover the cosine branch in _gen_fourier_features
+        rbf_kernel = gen_module(kernels.RBFKernel, config)
+        feature_map = gen_kernel_feature_map(
+            rbf_kernel,
+            num_ambient_inputs=config.num_inputs,
+            num_random_features=64,
+            cosine_only=True,
+        )
+        
+        X = torch.rand(10, config.num_inputs, device=rbf_kernel.device, dtype=rbf_kernel.dtype)
+        features = feature_map(X)
+        self.assertEqual(features.shape[-1], 64)
+        
+        # Test Matern kernel with cosine_only=True as well
+        matern_kernel = gen_module(kernels.MaternKernel, config)
+        matern_feature_map = gen_kernel_feature_map(
+            matern_kernel,
+            num_ambient_inputs=config.num_inputs,
+            num_random_features=64,
+            cosine_only=True,
+        )
+        
+        matern_features = matern_feature_map(X)
+        self.assertEqual(matern_features.shape[-1], 64)
+
+    def test_scale_kernel_active_dims_transform(self):
+        """Test ScaleKernel with active_dims different from base kernel"""
+        config = TestCaseConfig(seed=0, device=self.device, num_inputs=5)
+        
+        # Create a base kernel with specific active_dims
+        base_kernel = kernels.RBFKernel(active_dims=[0, 2, 4])
+        
+        # Create a ScaleKernel with different active_dims
+        scale_kernel = kernels.ScaleKernel(base_kernel, active_dims=[1, 2, 3])
+        
+        # Generate feature map
+        feature_map = gen_kernel_feature_map(
+            scale_kernel,
+            num_ambient_inputs=config.num_inputs,
+            num_random_features=64,
+        )
+        
+        # Verify that the input transform has been applied
+        X = torch.rand(10, config.num_inputs, device=scale_kernel.device, dtype=scale_kernel.dtype)
+        features = feature_map(X)
+        self.assertIsNotNone(features)
+
+    def test_product_kernel_cosine_only_auto(self):
+        """Test ProductKernel with multiple infinite-dimensional kernels"""
+        # Create a product of two infinite-dimensional kernels with proper setup
+        rbf1 = kernels.RBFKernel(ard_num_dims=2)
+        rbf2 = kernels.RBFKernel(ard_num_dims=2)
+        product_kernel = kernels.ProductKernel(rbf1, rbf2)
+        
+        # Generate feature map
+        feature_map = gen_kernel_feature_map(
+            product_kernel,
+            num_ambient_inputs=2,
+            num_random_features=64,
+        )
+        
+        # Verification
+        X = torch.rand(10, 2, device=product_kernel.device, dtype=product_kernel.dtype)
+        features = feature_map(X)
+        self.assertIsNotNone(features)
+
+    def test_odd_num_random_features_error(self):
+        """Test error when num_random_features is odd and cosine_only=False"""
+        config = TestCaseConfig(seed=0, device=self.device, num_inputs=2)
+        kernel = gen_module(kernels.RBFKernel, config)
+        
+        with self.assertRaisesRegex(UnsupportedError, "Expected an even number of random features"):
+            gen_kernel_feature_map(
+                kernel,
+                num_ambient_inputs=config.num_inputs,
+                num_random_features=63,  # Odd number
+                cosine_only=False,
+            )
