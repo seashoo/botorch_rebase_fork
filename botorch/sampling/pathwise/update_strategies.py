@@ -207,28 +207,29 @@ def _gaussian_update_ModelListGP(
         A list of Gaussian pathwise updates.
     """
     if not isinstance(sample_values, list):
-        # Handle tensor input by splitting based on model batch shapes
-        # Each model may have different batch shapes, so we need to split accordingly
+        # Handle tensor input by splitting based on number of training points
+        # Each model may have different number of training points
         sample_values_list = []
         start_idx = 0
         for submodel in model.models:
-            # Get the batch shape for this submodel
-            batch_shape = submodel._input_batch_shape
-            # Calculate end index based on batch shape or default to single value
-            end_idx = start_idx + batch_shape[-1] if batch_shape else start_idx + 1
+            # Get the number of training points for this submodel
+            (train_inputs,) = get_train_inputs(submodel, transformed=True)
+            n_train = train_inputs.shape[-2]
             # Split the tensor for this submodel
+            end_idx = start_idx + n_train
             sample_values_list.append(sample_values[..., start_idx:end_idx])
             start_idx = end_idx
         sample_values = sample_values_list
 
     if target_values is not None and not isinstance(target_values, list):
-        # Similar splitting logic for target values
+        # Similar splitting logic for target values based on training points
         # This ensures each submodel gets its corresponding targets
         target_values_list = []
         start_idx = 0
         for submodel in model.models:
-            batch_shape = submodel._input_batch_shape
-            end_idx = start_idx + batch_shape[-1] if batch_shape else start_idx + 1
+            (train_inputs,) = get_train_inputs(submodel, transformed=True)
+            n_train = train_inputs.shape[-2]
+            end_idx = start_idx + n_train
             target_values_list.append(target_values[..., start_idx:end_idx])
             start_idx = end_idx
         target_values = target_values_list

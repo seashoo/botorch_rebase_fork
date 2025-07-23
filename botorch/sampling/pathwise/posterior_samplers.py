@@ -115,8 +115,11 @@ def get_matheron_path_model(
     sample_shape = Size() if sample_shape is None else sample_shape
     path = draw_matheron_paths(model, sample_shape=sample_shape)
     num_outputs = model.num_outputs
-    if isinstance(model, ModelList) and len(model.models) != num_outputs:
-        raise UnsupportedError("A model-list of multi-output models is not supported.")
+    if isinstance(model, ModelList):
+        # Check if any model in the list a multi-output model
+        for m in model.models:
+            if hasattr(m, '_task_feature') or 'MultiTask' in type(m).__name__:
+                raise UnsupportedError("A model-list of multi-output models is not supported.")
 
     def f(X: Tensor) -> Tensor:
         r"""Reshapes the path evaluations to bring the output dimension to the end.
@@ -132,7 +135,28 @@ def get_matheron_path_model(
         if num_outputs == 1:
             res = path(X).unsqueeze(-1)
         elif isinstance(model, ModelList):
-            res = torch.stack(path(X), dim=-1)
+            path_outputs = path(X)
+            # For ModelListGP with batched models, concatenate along output dimension
+            # Each element in path_outputs may have shape [..., q] or [..., batch, q]
+            # We need to handle both cases correctly
+            if isinstance(model, ModelListGP) and model.models:
+                # Check if models are batched
+                first_model = model.models[0]
+                if hasattr(first_model, '_num_outputs') and first_model._num_outputs > 1:
+                    # Models are batched, concatenate along the batch dimension
+                    res = torch.cat(path_outputs, dim=-2)
+                    # Transpose to put outputs last: [..., q, m]
+                    res = res.transpose(-1, -2)
+                else:
+                    # Models are not batched, stack them
+                    res = torch.stack(path_outputs, dim=-1)
+            else:
+                # Handle empty path_outputs (e.g., from empty ModelList)
+                if not path_outputs:
+                    # Return tensor with shape (..., 0) for empty model list
+                    res = torch.empty(*X.shape[:-1], 0, device=X.device, dtype=X.dtype)
+                else:
+                    res = torch.stack(path_outputs, dim=-1)
         else:
             res = path(X.unsqueeze(-3)).transpose(-1, -2)
         return res

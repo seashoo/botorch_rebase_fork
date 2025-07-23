@@ -366,3 +366,87 @@ class TestKernelFeatureMaps(BotorchTestCase):
             cholesky = kernel.task_covar_module.covar_matrix.cholesky()
             test_features = KroneckerProductLinearOperator(data_map(X), cholesky)
             self.assertTrue(features.equal(test_features.to_dense()))
+
+    def test_feature_map_edge_cases(self):
+        """Test edge cases for feature maps including empty maps and errors."""
+        from botorch.exceptions.errors import UnsupportedError
+        
+        # Test empty FeatureMapList device/dtype
+        empty_list = maps.FeatureMapList(feature_maps=[])
+        self.assertIsNone(empty_list.device)
+        self.assertIsNone(empty_list.dtype)
+        
+        # Test empty DirectSumFeatureMap
+        empty_direct_sum = maps.DirectSumFeatureMap([])
+        self.assertEqual(empty_direct_sum.raw_output_shape, Size([]))
+        self.assertEqual(empty_direct_sum.batch_shape, Size([]))
+        
+        # Test DirectSumFeatureMap with only 0-dimensional feature maps
+        class ZeroDimFeatureMap(maps.FeatureMap):
+            def __init__(self):
+                super().__init__()
+                self.raw_output_shape = Size([])
+                self.batch_shape = Size([])
+                self.input_transform = None
+                self.output_transform = None
+                
+            def forward(self, x):
+                return torch.tensor(1.0)
+        
+        zero_dim_direct_sum = maps.DirectSumFeatureMap([ZeroDimFeatureMap()])
+        self.assertEqual(zero_dim_direct_sum.raw_output_shape, Size([]))
+        
+        # Test DirectSumFeatureMap batch shape mismatch error
+        class BatchMismatchFeatureMap1(maps.FeatureMap):
+            def __init__(self):
+                super().__init__()
+                self.raw_output_shape = Size([3])
+                self.batch_shape = Size([2])
+                
+            def forward(self, x):
+                return torch.randn(2, x.shape[0], 3)
+                
+        class BatchMismatchFeatureMap2(maps.FeatureMap):
+            def __init__(self):
+                super().__init__()
+                self.raw_output_shape = Size([3])
+                self.batch_shape = Size([3])  # Different batch shape
+                
+            def forward(self, x):
+                return torch.randn(3, x.shape[0], 3)
+        
+        mismatch_direct_sum = maps.DirectSumFeatureMap([
+            BatchMismatchFeatureMap1(), 
+            BatchMismatchFeatureMap2()
+        ])
+        with self.assertRaisesRegex(ValueError, "must have the same batch shapes"):
+            _ = mismatch_direct_sum.batch_shape
+            
+        # Test empty HadamardProductFeatureMap device/dtype
+        empty_hadamard = maps.HadamardProductFeatureMap([])
+        self.assertIsNone(empty_hadamard.device)
+        self.assertIsNone(empty_hadamard.dtype)
+        
+        # Test empty OuterProductFeatureMap device/dtype
+        empty_outer = maps.OuterProductFeatureMap([])
+        self.assertIsNone(empty_outer.device)
+        self.assertIsNone(empty_outer.dtype)
+        
+        # Test KernelEvaluationMap shape mismatch error
+        kernel = gen_module(kernels.RBFKernel, self.configs[0])
+        # Points with incompatible batch shape
+        bad_points = torch.rand(3, 4, self.configs[0].num_inputs, device=self.device)
+        kernel.batch_shape = Size([2])  # Incompatible with points shape
+        
+        with self.assertRaisesRegex(RuntimeError, "Shape mismatch"):
+            maps.KernelEvaluationMap(kernel=kernel, points=bad_points)
+            
+        # Test IndexKernelFeatureMap with None input
+        index_kernel = gen_module(kernels.IndexKernel, self.configs[0])
+        index_feature_map = maps.IndexKernelFeatureMap(kernel=index_kernel)
+        
+        # Call with None input
+        result = index_feature_map.forward(None)
+        # Should return Cholesky of covar_matrix
+        expected = index_kernel.covar_matrix.cholesky()
+        self.assertTrue(result.to_dense().allclose(expected.to_dense()))
