@@ -271,3 +271,74 @@ class TestUtilsHelpers(BotorchTestCase):
         self.assertIsInstance(result, torch.Tensor)
         # Check that the result has the correct shape
         self.assertEqual(result.shape, train_Y.shape)
+
+    def test_append_transform_with_existing_transform(self):
+        """Test append_transform when other transform exists"""
+        from botorch.sampling.pathwise.utils.helpers import append_transform
+        from botorch.sampling.pathwise.utils.transforms import ChainedTransform
+        from botorch.models.transforms.input import Normalize
+        
+        # Create a mock module that has TransformedModuleMixin interface
+        class MockModule:
+            def __init__(self):
+                self.existing_transform = Normalize(d=2)
+                
+        module = MockModule()
+        new_transform = Normalize(d=3)
+        
+        # This should trigger line 142 where ChainedTransform is created
+        append_transform(module, 'existing_transform', new_transform)
+        
+        # Verify ChainedTransform was created
+        self.assertIsInstance(module.existing_transform, ChainedTransform)
+        self.assertEqual(len(module.existing_transform.transforms), 2)
+
+    def test_untransform_shape_with_none_transform(self):
+        """Test untransform_shape with None transform"""
+        from botorch.sampling.pathwise.utils.helpers import untransform_shape
+        
+        shape = torch.Size([10, 2])
+        result_shape = untransform_shape(None, shape)
+        
+        # Should return the same shape when transform is None
+        self.assertEqual(result_shape, shape)
+
+    def test_untransform_shape_with_untrained_outcome_transform(self):
+        """Test untransform_shape with untrained OutcomeTransform"""
+        from botorch.sampling.pathwise.utils.helpers import untransform_shape
+        from botorch.models.transforms.outcome import OutcomeTransform
+        
+        # Create a mock OutcomeTransform that is not trained
+        class MockUntrainedOutcomeTransform(OutcomeTransform):
+            def __init__(self):
+                super().__init__()
+                self._is_trained = False
+                
+            def forward(self, Y, Yvar=None):
+                return Y, Yvar
+                
+            def untransform(self, Y, Yvar=None):
+                return Y, Yvar
+        
+        transform = MockUntrainedOutcomeTransform()
+        shape = torch.Size([10, 2])
+        
+        result_shape = untransform_shape(transform, shape)
+        # Should return the same shape when transform is not trained
+        self.assertEqual(result_shape, shape)
+
+    def test_get_kernel_num_inputs_with_default(self):
+        """Test get_kernel_num_inputs with default value"""
+        from botorch.sampling.pathwise.utils.helpers import get_kernel_num_inputs
+        from gpytorch.kernels import RBFKernel
+        
+        # Create a kernel with no active_dims or ard_num_dims
+        kernel = RBFKernel()
+        
+        # Test with default value (should return default)
+        result = get_kernel_num_inputs(kernel, num_ambient_inputs=None, default=5)
+        self.assertEqual(result, 5)
+        
+        # Test with num_ambient_inputs (should return num_ambient_inputs)  
+        result = get_kernel_num_inputs(kernel, num_ambient_inputs=3, default=5)
+        self.assertEqual(result, 3)
