@@ -74,7 +74,7 @@ class TransformedModuleMixin(Module):
 
         This enforces the PyTorch pattern of implementing computation in forward().
         """
-        pass
+        pass  # pragma: no cover
 
 
 class ModuleDictMixin(ABC, Generic[TModule]):

@@ -178,49 +178,47 @@ class TestGaussianUpdates(BotorchTestCase):
                     self.assertAllClose(
                         path_none_target_values.weight, path_with_target_values.weight
                     )
-    
+
     def test_model_list_tensor_inputs(self):
         """Test ModelListGP with tensor inputs that need to be split."""
         for config, model_list in self.model_lists:
             tkwargs = {"device": config.device, "dtype": config.dtype}
-            
-            # Create sample values as a single tensor instead of list
-            sample_shape = torch.Size([])
-            
+
             # Create sample values and target values that match the training data
             # for each model in the ModelListGP
             sample_values_list = []
             target_values_list = []
-            
+
             for m in model_list.models:
                 # Get the training data shape for this model
                 (train_X,) = get_train_inputs(m, transformed=True)
                 n_train = train_X.shape[-2]
-                
+
                 # Create sample values for this model
                 sv = torch.randn(n_train, **tkwargs)
                 sample_values_list.append(sv)
-                
+
                 # Create target values for this model
                 tv = torch.randn(n_train, **tkwargs)
                 target_values_list.append(tv)
-            
+
             # Concatenate to create single tensors
             sample_values = torch.cat(sample_values_list, dim=-1)
             target_values = torch.cat(target_values_list, dim=-1)
-            
+
             # Call gaussian_update which should trigger the splitting logic
             update_paths = gaussian_update(
                 model=model_list,
                 sample_values=sample_values,
                 target_values=target_values,
             )
-            
+
             # Verify it's a PathList
             from botorch.sampling.pathwise.paths import PathList
+
             self.assertIsInstance(update_paths, PathList)
             self.assertEqual(len(update_paths), len(model_list.models))
-            
+
             # Test with None target_values but tensor sample_values
             update_paths_none = gaussian_update(
                 model=model_list,
@@ -228,12 +226,10 @@ class TestGaussianUpdates(BotorchTestCase):
                 target_values=None,
             )
             self.assertIsInstance(update_paths_none, PathList)
-            
+
             # Test evaluation
             X = gen_random_inputs(
-                model_list.models[0], 
-                batch_shape=[4], 
-                transformed=True
+                model_list.models[0], batch_shape=[4], transformed=True
             )
             outputs = update_paths(X)
             self.assertIsInstance(outputs, list)

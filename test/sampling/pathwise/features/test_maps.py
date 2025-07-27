@@ -370,17 +370,17 @@ class TestKernelFeatureMaps(BotorchTestCase):
     def test_feature_map_edge_cases(self):
         """Test edge cases for feature maps including empty maps and errors."""
         from botorch.exceptions.errors import UnsupportedError
-        
+
         # Test empty FeatureMapList device/dtype
         empty_list = maps.FeatureMapList(feature_maps=[])
         self.assertIsNone(empty_list.device)
         self.assertIsNone(empty_list.dtype)
-        
+
         # Test empty DirectSumFeatureMap
         empty_direct_sum = maps.DirectSumFeatureMap([])
         self.assertEqual(empty_direct_sum.raw_output_shape, Size([]))
         self.assertEqual(empty_direct_sum.batch_shape, Size([]))
-        
+
         # Test DirectSumFeatureMap with only 0-dimensional feature maps
         class ZeroDimFeatureMap(maps.FeatureMap):
             def __init__(self):
@@ -389,92 +389,93 @@ class TestKernelFeatureMaps(BotorchTestCase):
                 self.batch_shape = Size([])
                 self.input_transform = None
                 self.output_transform = None
-                
+
             def forward(self, x):
                 return torch.tensor(1.0)
-        
+
         zero_dim_direct_sum = maps.DirectSumFeatureMap([ZeroDimFeatureMap()])
         self.assertEqual(zero_dim_direct_sum.raw_output_shape, Size([]))
-        
+
         # Test DirectSumFeatureMap batch shape mismatch error
         class BatchMismatchFeatureMap1(maps.FeatureMap):
             def __init__(self):
                 super().__init__()
                 self.raw_output_shape = Size([3])
                 self.batch_shape = Size([2])
-                
+
             def forward(self, x):
                 return torch.randn(2, x.shape[0], 3)
-                
+
         class BatchMismatchFeatureMap2(maps.FeatureMap):
             def __init__(self):
                 super().__init__()
                 self.raw_output_shape = Size([3])
                 self.batch_shape = Size([3])  # Different batch shape
-                
+
             def forward(self, x):
                 return torch.randn(3, x.shape[0], 3)
-        
-        mismatch_direct_sum = maps.DirectSumFeatureMap([
-            BatchMismatchFeatureMap1(), 
-            BatchMismatchFeatureMap2()
-        ])
+
+        mismatch_direct_sum = maps.DirectSumFeatureMap(
+            [BatchMismatchFeatureMap1(), BatchMismatchFeatureMap2()]
+        )
         with self.assertRaisesRegex(ValueError, "must have the same batch shapes"):
             _ = mismatch_direct_sum.batch_shape
-            
+
         # Test empty HadamardProductFeatureMap device/dtype
         empty_hadamard = maps.HadamardProductFeatureMap([])
         self.assertIsNone(empty_hadamard.device)
         self.assertIsNone(empty_hadamard.dtype)
-        
+
         # Test empty OuterProductFeatureMap device/dtype
         empty_outer = maps.OuterProductFeatureMap([])
         self.assertIsNone(empty_outer.device)
         self.assertIsNone(empty_outer.dtype)
-        
+
         # Test KernelEvaluationMap dimension mismatch error
         kernel = gen_module(kernels.RBFKernel, self.configs[0])
         # Create points with wrong number of dimensions
-        bad_points = torch.rand(self.configs[0].num_inputs, device=self.device)  # 1D instead of 2D
-        
+        bad_points = torch.rand(
+            self.configs[0].num_inputs, device=self.device
+        )  # 1D instead of 2D
+
         with self.assertRaisesRegex(RuntimeError, "Dimension mismatch"):
             maps.KernelEvaluationMap(kernel=kernel, points=bad_points)
-            
+
         # Test KernelEvaluationMap shape mismatch error
         kernel = gen_module(kernels.RBFKernel, self.configs[0])
         # Points with incompatible batch shape
         bad_points = torch.rand(3, 4, self.configs[0].num_inputs, device=self.device)
         kernel.batch_shape = Size([2])  # Incompatible with points shape
-        
+
         with self.assertRaisesRegex(RuntimeError, "Shape mismatch"):
             maps.KernelEvaluationMap(kernel=kernel, points=bad_points)
-            
+
         # Test IndexKernelFeatureMap with None input
         index_kernel = gen_module(kernels.IndexKernel, self.configs[0])
         index_feature_map = maps.IndexKernelFeatureMap(kernel=index_kernel)
-        
+
         # Call with None input
         result = index_feature_map.forward(None)
         # Should return Cholesky of covar_matrix
         expected = index_kernel.covar_matrix.cholesky()
         self.assertTrue(result.to_dense().allclose(expected.to_dense()))
-        
+
         # Test IndexKernelFeatureMap with wrong kernel type
         rbf_kernel = gen_module(kernels.RBFKernel, self.configs[0])
         with self.assertRaisesRegex(ValueError, "Expected.*IndexKernel"):
             maps.IndexKernelFeatureMap(kernel=rbf_kernel)
-            
+
         # Test LinearKernelFeatureMap with wrong kernel type
         rbf_kernel = gen_module(kernels.RBFKernel, self.configs[0])
         with self.assertRaisesRegex(ValueError, "Expected.*LinearKernel"):
             maps.LinearKernelFeatureMap(kernel=rbf_kernel, raw_output_shape=Size([3]))
-            
+
         # Test MultitaskKernelFeatureMap with wrong kernel type
         rbf_kernel = gen_module(kernels.RBFKernel, self.configs[0])
         data_map = gen_kernel_feature_map(rbf_kernel)
         with self.assertRaisesRegex(ValueError, "Expected.*MultitaskKernel"):
             maps.MultitaskKernelFeatureMap(kernel=rbf_kernel, data_feature_map=data_map)
-        
+
         # Test FeatureMapList with device/dtype conflicts
         class DeviceFeatureMap(maps.FeatureMap):
             def __init__(self, device):
@@ -485,35 +486,35 @@ class TestKernelFeatureMaps(BotorchTestCase):
                 self.dtype = torch.float32
                 self.input_transform = None
                 self.output_transform = None
-                
+
             def forward(self, x):
                 return torch.randn(x.shape[0], 3, device=self.device, dtype=self.dtype)
-        
+
         # Force device mismatch for FeatureMapList
-        device_map1 = DeviceFeatureMap(torch.device('cpu'))
-        device_map2 = DeviceFeatureMap(torch.device('cpu'))
+        device_map1 = DeviceFeatureMap(torch.device("cpu"))
+        device_map2 = DeviceFeatureMap(torch.device("cpu"))
         # Create a fake device to force mismatch
-        fake_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        fake_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if not torch.cuda.is_available():
             # Force different device by creating a mock device
-            device_map2.device = 'fake_device'
+            device_map2.device = "fake_device"
         else:
             device_map2.device = fake_device
-        
+
         if torch.cuda.is_available() or device_map2.device != device_map1.device:
             device_list = maps.FeatureMapList([device_map1, device_map2])
             with self.assertRaisesRegex(UnsupportedError, "must be colocated"):
                 _ = device_list.device
-        
+
         # Test multiple dtypes error
-        dtype_map1 = DeviceFeatureMap(torch.device('cpu'))
-        dtype_map2 = DeviceFeatureMap(torch.device('cpu'))
+        dtype_map1 = DeviceFeatureMap(torch.device("cpu"))
+        dtype_map2 = DeviceFeatureMap(torch.device("cpu"))
         dtype_map2.dtype = torch.float64
-        
+
         dtype_list = maps.FeatureMapList([dtype_map1, dtype_map2])
         with self.assertRaisesRegex(UnsupportedError, "must have the same data type"):
             _ = dtype_list.dtype
-            
+
         # Test DirectSumFeatureMap with mixed dimensions
         class MixedDimFeatureMap(maps.FeatureMap):
             def __init__(self, output_shape):
@@ -522,58 +523,163 @@ class TestKernelFeatureMaps(BotorchTestCase):
                 self.batch_shape = Size([])
                 self.input_transform = None
                 self.output_transform = None
-                self.device = torch.device('cpu')
+                self.device = torch.device("cpu")
                 self.dtype = torch.float32
-                
+
             def forward(self, x):
                 return torch.randn(x.shape[0], *self.raw_output_shape)
-        
-        # Create maps with different dimensions to test the else branch in raw_output_shape
+
+        # Create maps with different dimensions to test the else branch
+        # in raw_output_shape
         mixed_map1 = MixedDimFeatureMap(Size([2, 3]))  # 2D output
-        mixed_map2 = MixedDimFeatureMap(Size([4]))     # 1D output
-        
+        mixed_map2 = MixedDimFeatureMap(Size([4]))  # 1D output
+
         mixed_direct_sum = maps.DirectSumFeatureMap([mixed_map1, mixed_map2])
         # This should trigger the else branch in raw_output_shape calculation
         shape = mixed_direct_sum.raw_output_shape
         self.assertEqual(len(shape), 2)  # Should have 2 dimensions
         self.assertEqual(shape[-1], 3 + 4)  # Concatenation dimension
-        
+
+        # Test specific case: mixed dimensions where lower-dim maps
+        # have dimensions that need to be handled in the else branch of the inner if
+        # Create a 3D map and a 2D map to force the condition: ndim < max_ndim
+        # but with existing dimensions
+        map_3d = MixedDimFeatureMap(Size([2, 3, 5]))  # 3D: max_ndim will be 3
+        map_2d = MixedDimFeatureMap(Size([4, 6]))  # 2D: will be expanded to 3D
+
+        # This should trigger lines where ndim < max_ndim and we're in the else branch
+        # for i in range(max_ndim - 1), specifically the else part where
+        # idx = i - (max_ndim - ndim)
+        mixed_direct_sum_2 = maps.DirectSumFeatureMap([map_3d, map_2d])
+        shape_2 = mixed_direct_sum_2.raw_output_shape
+
+        # For this case:
+        # max_ndim = 3 (from map_3d)
+        # map_2d has ndim = 2, so ndim < max_ndim
+        # For i in range(2): i=0,1
+        # For map_2d: when i >= max_ndim - ndim (i.e., i >= 3-2=1), we go to else branch
+        # So when i=1, we execute lines 179-180: idx = 1 - (3-2) = 0,
+        # result_shape[1] = max(result_shape[1], shape[0])
+        self.assertEqual(len(shape_2), 3)  # Should have 3 dimensions
+        self.assertEqual(shape_2[-1], 5 + 6)  # Concatenation: last dims added
+        self.assertEqual(
+            shape_2[0], max(2, 1)
+        )  # max of first dimensions (with expansion)
+        self.assertEqual(shape_2[1], max(3, 4))  # max of second dimensions
+
         # Force device mismatch for HadamardProductFeatureMap
-        hadamard_map1 = DeviceFeatureMap(torch.device('cpu'))
-        hadamard_map2 = DeviceFeatureMap(torch.device('cpu'))
-        fake_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        hadamard_map1 = DeviceFeatureMap(torch.device("cpu"))
+        hadamard_map2 = DeviceFeatureMap(torch.device("cpu"))
+        fake_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if not torch.cuda.is_available():
-            hadamard_map2.device = 'fake_device'
+            hadamard_map2.device = "fake_device"
         else:
             hadamard_map2.device = fake_device
-        
+
         if torch.cuda.is_available() or hadamard_map2.device != hadamard_map1.device:
-            hadamard_list = maps.HadamardProductFeatureMap([hadamard_map1, hadamard_map2])
+            hadamard_list = maps.HadamardProductFeatureMap(
+                [hadamard_map1, hadamard_map2]
+            )
             with self.assertRaisesRegex(UnsupportedError, "must be colocated"):
                 _ = hadamard_list.device
-        
-        hadamard_map2.device = torch.device('cpu')
+
+        hadamard_map2.device = torch.device("cpu")
         hadamard_map2.dtype = torch.float64
-        hadamard_dtype_list = maps.HadamardProductFeatureMap([hadamard_map1, hadamard_map2])
+        hadamard_dtype_list = maps.HadamardProductFeatureMap(
+            [hadamard_map1, hadamard_map2]
+        )
         with self.assertRaisesRegex(UnsupportedError, "must have the same data type"):
             _ = hadamard_dtype_list.dtype
-            
+
         # Force device mismatch for OuterProductFeatureMap
-        outer_map1 = DeviceFeatureMap(torch.device('cpu'))
-        outer_map2 = DeviceFeatureMap(torch.device('cpu'))
-        fake_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        outer_map1 = DeviceFeatureMap(torch.device("cpu"))
+        outer_map2 = DeviceFeatureMap(torch.device("cpu"))
+        fake_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if not torch.cuda.is_available():
-            outer_map2.device = 'fake_device'
+            outer_map2.device = "fake_device"
         else:
             outer_map2.device = fake_device
-        
+
         if torch.cuda.is_available() or outer_map2.device != outer_map1.device:
             outer_list = maps.OuterProductFeatureMap([outer_map1, outer_map2])
             with self.assertRaisesRegex(UnsupportedError, "must be colocated"):
                 _ = outer_list.device
-        
-        outer_map2.device = torch.device('cpu')
+
+        outer_map2.device = torch.device("cpu")
         outer_map2.dtype = torch.float64
         outer_dtype_list = maps.OuterProductFeatureMap([outer_map1, outer_map2])
         with self.assertRaisesRegex(UnsupportedError, "must have the same data type"):
             _ = outer_dtype_list.dtype
+
+    def test_feature_map_output_shape_none_transform(self):
+        """Test FeatureMap output_shape when output_transform is None"""
+
+        # Use a concrete subclass that can actually be instantiated
+        class ConcreteFeatureMap(maps.FeatureMap):
+            def __init__(self):
+                super().__init__()
+                self.raw_output_shape = Size([5])
+                self.output_transform = None  # Explicitly set to None
+                self.device = None
+                self.dtype = None
+
+            def forward(self, x, **kwargs):
+                return torch.randn(x.shape[0], 5)
+
+        feature_map = ConcreteFeatureMap()
+
+        # return self.raw_output_shape
+        output_shape = feature_map.output_shape
+        self.assertEqual(output_shape, Size([5]))
+
+    def test_fourier_feature_map_no_bias(self):
+        """Test FourierFeatureMap with no bias"""
+        config = TestCaseConfig(seed=0, device=self.device, num_inputs=2)
+        kernel = gen_module(kernels.RBFKernel, config)
+        weight = torch.randn(
+            4, config.num_inputs, device=self.device, dtype=config.dtype
+        )
+
+        # Create FourierFeatureMap without bias (bias=None)
+        fourier_map = maps.FourierFeatureMap(kernel=kernel, weight=weight, bias=None)
+
+        X = torch.rand(5, config.num_inputs, device=self.device, dtype=config.dtype)
+        output = fourier_map(X)
+
+        # When bias is None, should just return out
+        expected = X @ weight.transpose(-2, -1)
+        self.assertTrue(output.allclose(expected))
+
+    def test_direct_sum_feature_map_force_else_branch(self):
+        """Test to force execution of else branch in DirectSumFeatureMap"""
+
+        # Create custom feature maps that will definitely trigger the else branch
+        class TestFeatureMap(maps.FeatureMap):
+            def __init__(self, shape):
+                super().__init__()
+                self.raw_output_shape = Size(shape)
+                self.batch_shape = Size([])
+                self.input_transform = None
+                self.output_transform = None
+                self.device = torch.device("cpu")
+                self.dtype = torch.float32
+
+            def forward(self, x):
+                return torch.randn(*([x.shape[0]] + list(self.raw_output_shape)))
+
+        # Force the exact condition: ndim == max_ndim for all maps
+        # Use 2D maps so max_ndim = 2, and both maps have ndim = 2
+        map1 = TestFeatureMap([3, 4])  # 2D: [3, 4]
+        map2 = TestFeatureMap([5, 6])  # 2D: [5, 6]
+        map3 = TestFeatureMap([2, 7])  # 2D: [2, 7]
+
+        # All maps have same ndim (2), so all will go to else branch
+        feature_map = maps.DirectSumFeatureMap([map1, map2, map3])
+
+        # Access raw_output_shape to trigger the computation
+        shape = feature_map.raw_output_shape
+
+        # result_shape[-1] += shape[-1] for each map: 0 + 4 + 6 + 7 = 17
+        # result_shape[0] = max(3, 5, 2) = 5
+        expected_shape = Size([5, 17])  # [max_first_dim, sum_last_dim]
+        self.assertEqual(shape, expected_shape)

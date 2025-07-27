@@ -125,3 +125,31 @@ class TestDrawKernelFeaturePaths(BotorchTestCase):
                 self.assertEqual(len(sample_list), len(model_list.models))
                 for path, sample in zip(path_list, sample_list):
                     self.assertTrue(path(X).equal(sample))
+
+    def test_weight_generator_custom(self):
+        """Test custom weight generator in prior_samplers.py"""
+        import torch
+        from botorch.sampling.pathwise.prior_samplers import (
+            _draw_kernel_feature_paths_fallback,
+        )
+        from gpytorch.kernels import RBFKernel
+
+        # Create kernel with ard_num_dims to avoid num_ambient_inputs issue
+        kernel = RBFKernel(ard_num_dims=2)
+        sample_shape = torch.Size([2, 3])
+
+        # Custom weight generator
+        def custom_weight_generator(weight_shape):
+            return torch.ones(weight_shape)
+
+        result = _draw_kernel_feature_paths_fallback(
+            mean_module=None,
+            covar_module=kernel,
+            sample_shape=sample_shape,
+            weight_generator=custom_weight_generator,
+        )
+
+        # Verify the result
+        self.assertIsNotNone(result.weight)
+        # Weight should be all ones (from our custom generator)
+        self.assertTrue(torch.allclose(result.weight, torch.ones_like(result.weight)))

@@ -43,7 +43,7 @@ class FeatureMap(TransformedModuleMixin, Module):
 
     @abstractmethod
     def forward(self, x: Tensor, **kwargs: Any) -> Any:
-        pass
+        pass  # pragma: no cover
 
     @property
     def output_shape(self) -> Size:

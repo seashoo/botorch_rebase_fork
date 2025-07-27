@@ -118,8 +118,10 @@ def get_matheron_path_model(
     if isinstance(model, ModelList):
         # Check if any model in the list a multi-output model
         for m in model.models:
-            if hasattr(m, '_task_feature') or 'MultiTask' in type(m).__name__:
-                raise UnsupportedError("A model-list of multi-output models is not supported.")
+            if hasattr(m, "_task_feature") or "MultiTask" in type(m).__name__:
+                raise UnsupportedError(
+                    "A model-list of multi-output models is not supported."
+                )
 
     def f(X: Tensor) -> Tensor:
         r"""Reshapes the path evaluations to bring the output dimension to the end.
@@ -142,7 +144,10 @@ def get_matheron_path_model(
             if isinstance(model, ModelListGP) and model.models:
                 # Check if models are batched
                 first_model = model.models[0]
-                if hasattr(first_model, '_num_outputs') and first_model._num_outputs > 1:
+                if (
+                    hasattr(first_model, "_num_outputs")
+                    and first_model._num_outputs > 1
+                ):
                     # Models are batched, concatenate along the batch dimension
                     res = torch.cat(path_outputs, dim=-2)
                     # Transpose to put outputs last: [..., q, m]
