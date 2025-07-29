@@ -4,6 +4,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import random
 from dataclasses import fields
 from itertools import product
 from typing import Any, Callable
@@ -29,6 +30,7 @@ from botorch.optim.optimize_mixed import (
     continuous_step,
     discrete_step,
     generate_starting_points,
+    get_categorical_neighbors,
     get_nearest_neighbors,
     get_spray_points,
     MAX_DISCRETE_VALUES,
@@ -354,6 +356,7 @@ class TestOptimizeAcqfMixed(BotorchTestCase):
                     options={"maxiter_discrete": 1, "tol": 0, "init_batch_limit": 32},
                 ),
                 discrete_dims=binary_dims,
+                cat_dims=cat_dims,
                 current_x=X,
             )
             ei_x_none = ei(X)
@@ -374,6 +377,7 @@ class TestOptimizeAcqfMixed(BotorchTestCase):
                     options={"maxiter_discrete": 1, "tol": 0, "init_batch_limit": 2},
                 ),
                 discrete_dims=binary_dims,
+                cat_dims=cat_dims,
                 current_x=X,
             )
             ei_x_none = ei(X)
@@ -443,6 +447,7 @@ class TestOptimizeAcqfMixed(BotorchTestCase):
                     ],
                 ),
                 discrete_dims=binary_dims,
+                cat_dims=cat_dims,
                 current_x=X,
             )
             self.assertAllClose(ei_val, torch.full_like(ei_val, i + 1))
@@ -602,6 +607,7 @@ class TestOptimizeAcqfMixed(BotorchTestCase):
                 return_best_only=False,
             ),
             discrete_dims=binary_dims,
+            cat_dims=torch.tensor([], device=self.device, dtype=torch.long),
             current_x=X.clone(),
         )
         for b_i in range(b):
@@ -631,6 +637,7 @@ class TestOptimizeAcqfMixed(BotorchTestCase):
                 return_best_only=False,
             ),
             discrete_dims=binary_dims,
+            cat_dims=torch.tensor([], device=self.device, dtype=torch.long),
             current_x=X_,
         )
         self.assertTrue(
@@ -642,12 +649,12 @@ class TestOptimizeAcqfMixed(BotorchTestCase):
         self.assertAllClose(X_new[:, :2], X_[:, :2])
 
         # test edge case when all parameters are binary
-        root = torch.rand(d_bin)
+        root = torch.rand(d_bin, device=self.device)
         model = QuadraticDeterministicModel(root)
         ei = ExpectedImprovement(model, best_f=best_f)
         X = self._get_random_binary(d_bin, k)[None]
         bounds = self.single_bound.repeat(1, d_bin)
-        binary_dims = torch.arange(d_bin)
+        binary_dims = torch.arange(d_bin, device=self.device)
         X_out, ei_val = continuous_step(
             opt_inputs=_make_opt_inputs(
                 acq_function=ei,
@@ -845,7 +852,7 @@ class TestOptimizeAcqfMixed(BotorchTestCase):
         # Invalid indices will raise an error.
         with self.assertRaisesRegex(
             ValueError,
-            "with unique integers between 0 and num_dims - 1",
+            "with unique, disjoint integers between 0 and num_dims - 1",
         ):
             optimize_acqf_mixed_alternating(
                 acq_function=acqf,
@@ -869,6 +876,7 @@ class TestOptimizeAcqfMixed(BotorchTestCase):
         bounds[1, 3:5] = 4.0
         # Update the model to have a different optimizer.
         root = torch.tensor([0.0, 0.0, 0.0, 4.0, 4.0], device=self.device)
+        torch.manual_seed(0)
         model = QuadraticDeterministicModel(root)
         acqf = qLogNoisyExpectedImprovement(model=model, X_baseline=train_X)
         with mock.patch(
@@ -1237,6 +1245,7 @@ class TestOptimizeAcqfMixed(BotorchTestCase):
         )
         # Update the model to have a different optimizer.
         root = torch.tensor([0.0, 0.0, 0.0, 25.0, 10.0], device=self.device)
+        torch.manual_seed(0)
         model = QuadraticDeterministicModel(root)
         acqf = qLogNoisyExpectedImprovement(model=model, X_baseline=train_X)
 

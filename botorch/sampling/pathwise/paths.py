@@ -167,9 +167,17 @@ class GeneralizedLinearPath(SamplePath):
             weight: A tensor of weights used to combine input features. When generated
                 with `draw_kernel_feature_paths`, `weight` is a Tensor with the shape
                 `sample_shape x batch_shape x num_outputs`.
+            weight: A tensor of weights used to combine input features. When generated
+                with `draw_kernel_feature_paths`, `weight` is a Tensor with the shape
+                `sample_shape x batch_shape x num_outputs`.
             bias_module: An optional module used to define additive offsets.
             input_transform: An optional input transform for the module.
             output_transform: An optional output transform for the module.
+            is_ensemble: Whether the associated model is an ensemble model or not.
+            ensemble_as_batch: Whether the ensemble dimension is added as a batch
+                dimension or not. If `True`, the ensemble dimension is treated as a
+                batch dimension, which allows for the joint optimization of all members
+                of the ensemble.
             is_ensemble: Whether the associated model is an ensemble model or not.
             ensemble_as_batch: Whether the ensemble dimension is added as a batch
                 dimension or not. If `True`, the ensemble dimension is treated as a
@@ -185,6 +193,8 @@ class GeneralizedLinearPath(SamplePath):
         self.bias_module = bias_module
         self.input_transform = input_transform
         self.output_transform = output_transform
+        self.is_ensemble = is_ensemble
+        self.ensemble_as_batch = ensemble_as_batch
         self.is_ensemble = is_ensemble
         self.ensemble_as_batch = ensemble_as_batch
 

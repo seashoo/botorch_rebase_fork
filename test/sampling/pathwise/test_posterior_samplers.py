@@ -320,6 +320,11 @@ class TestGetMatheronPathModel(BotorchTestCase):
             # torch.Size([3, 4, 5, 2])
             # torch.Size([3, 4, 5, 2])
             # irrespective of whether `is_ensemble` is true or false.
+            # shapes in each iteration of the loop are, respectively:
+            # torch.Size([4, 5, 2])
+            # torch.Size([3, 4, 5, 2])
+            # torch.Size([3, 4, 5, 2])
+            # irrespective of whether `is_ensemble` is true or false.
             self.assertEqual(
                 model.posterior(X).mean.shape, path_model.posterior(X).mean.shape
             )

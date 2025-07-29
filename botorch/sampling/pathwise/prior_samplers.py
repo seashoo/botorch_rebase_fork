@@ -91,6 +91,7 @@ def _draw_kernel_feature_paths_fallback(
     )
     if weight_generator is None:
         # weight is sample_shape x batch_shape x num_outputs
+        # weight is sample_shape x batch_shape x num_outputs
         weight = draw_sobol_normal_samples(
             n=sample_shape.numel() * covar_module.batch_shape.numel(),
             d=feature_map.output_shape.numel(),
