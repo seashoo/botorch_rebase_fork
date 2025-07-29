@@ -84,7 +84,7 @@ def gen_random_inputs(
         tkwargs = {"device": train_X.device, "dtype": train_X.dtype}
         X = torch.rand((*batch_shape, train_X.shape[-1]), **tkwargs)
         if isinstance(model, models.MultiTaskGP):
-            num_tasks = model.task_covar_module.raw_var.shape[-1]
+            num_tasks = model.num_tasks
             X[..., model._task_feature] = (
                 torch.randint(num_tasks, size=X.shape[:-1], **tkwargs)
                 if task_id is None

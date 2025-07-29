@@ -23,6 +23,7 @@ from botorch.sampling.pathwise.utils import (
 )
 from botorch.utils.dispatcher import Dispatcher
 from botorch.utils.sampling import draw_sobol_normal_samples
+from botorch.utils.transforms import is_ensemble
 from gpytorch.kernels import Kernel
 from gpytorch.models import ApproximateGP, ExactGP, GP
 from gpytorch.variational import _VariationalStrategy
@@ -59,6 +60,7 @@ def _draw_kernel_feature_paths_fallback(
     input_transform: TInputTransform | None = None,
     output_transform: TOutputTransform | None = None,
     weight_generator: Callable[[Size], Tensor] | None = None,
+    is_ensemble: bool = False,
     **kwargs: Any,
 ) -> GeneralizedLinearPath:
     r"""Generate sample paths from a kernel-based prior using feature maps.
@@ -77,6 +79,7 @@ def _draw_kernel_feature_paths_fallback(
         output_transform: Optional transform applied to output after feature generation.
         weight_generator: Optional callable to generate random weights. If None,
             uses Sobol sequences to generate normally distributed weights.
+        is_ensemble: Whether the associated model is an ensemble model or not.
         **kwargs: Additional arguments passed to :func:`map_generator`.
     """
     feature_map = map_generator(kernel=covar_module, **kwargs)
@@ -87,6 +90,7 @@ def _draw_kernel_feature_paths_fallback(
         *feature_map.output_shape,
     )
     if weight_generator is None:
+        # weight is sample_shape x batch_shape x num_outputs
         weight = draw_sobol_normal_samples(
             n=sample_shape.numel() * covar_module.batch_shape.numel(),
             d=feature_map.output_shape.numel(),
@@ -104,6 +108,7 @@ def _draw_kernel_feature_paths_fallback(
         bias_module=mean_module,
         input_transform=input_transform,
         output_transform=output_transform,
+        is_ensemble=is_ensemble,
     )
 
 
@@ -118,6 +123,7 @@ def _draw_kernel_feature_paths_ExactGP(
         input_transform=get_input_transform(model),
         output_transform=get_output_transform(model),
         num_ambient_inputs=train_X.shape[-1],
+        is_ensemble=is_ensemble(model),
         **kwargs,
     )
 
@@ -144,19 +150,57 @@ def _draw_kernel_feature_paths_MultiTaskGP(
         else model._task_feature
     )
 
-    # NOTE: May want to use a `ProductKernel` instead in `MultiTaskGP`
-    base_kernel = deepcopy(model.covar_module)
-    base_kernel.active_dims = torch.LongTensor(
-        [index for index in range(train_X.shape[-1]) if index != task_index],
-        device=base_kernel.device,
-    )
-
-    task_kernel = deepcopy(model.task_covar_module)
-    task_kernel.active_dims = torch.tensor([task_index], device=base_kernel.device)
+    # Extract kernels from the product kernel structure
+    # model.covar_module is a ProductKernel with data_covar_module and task_covar_module
+    from gpytorch.kernels import ProductKernel
+    
+    if isinstance(model.covar_module, ProductKernel):
+        # Find the data kernel (without task feature active dims) and task kernel
+        data_kernel = None
+        task_kernel = None
+        
+        for kernel in model.covar_module.kernels:
+            if hasattr(kernel, 'active_dims') and kernel.active_dims is not None:
+                if task_index in kernel.active_dims:
+                    task_kernel = deepcopy(kernel)
+                else:
+                    data_kernel = deepcopy(kernel)
+            else:
+                # If no active_dims, assume it's the data kernel
+                data_kernel = deepcopy(kernel)
+                data_kernel.active_dims = torch.LongTensor(
+                    [index for index in range(train_X.shape[-1]) if index != task_index],
+                    device=data_kernel.device,
+                )
+        
+        if task_kernel is None:
+            # Fallback: create task kernel from scratch
+            from gpytorch.kernels import IndexKernel
+            task_kernel = IndexKernel(
+                num_tasks=model.num_tasks,
+                rank=model._rank,
+                active_dims=[task_index],
+            )
+            task_kernel = task_kernel.to(device=model.covar_module.device)
+    else:
+        # Fallback for non-ProductKernel case
+        data_kernel = deepcopy(model.covar_module)
+        data_kernel.active_dims = torch.LongTensor(
+            [index for index in range(train_X.shape[-1]) if index != task_index],
+            device=data_kernel.device,
+        )
+        
+        from gpytorch.kernels import IndexKernel
+        task_kernel = IndexKernel(
+            num_tasks=model.num_tasks,
+            rank=model._rank,
+            active_dims=[task_index],
+        )
+        task_kernel = task_kernel.to(device=model.covar_module.device)
 
     return _draw_kernel_feature_paths_fallback(
         mean_module=model.mean_module,
-        covar_module=base_kernel * task_kernel,
+        covar_module=data_kernel * task_kernel,
         input_transform=get_input_transform(model),
         output_transform=get_output_transform(model),
         num_ambient_inputs=num_ambient_inputs,
@@ -192,5 +236,6 @@ def _draw_kernel_feature_paths_ApproximateGP_fallback(
     return _draw_kernel_feature_paths_fallback(
         mean_module=model.mean_module,
         covar_module=model.covar_module,
+        is_ensemble=is_ensemble(model),
         **kwargs,
     )

@@ -12,6 +12,7 @@ from types import NoneType
 from typing import Any
 
 import torch
+
 from botorch.models.approximate_gp import ApproximateGPyTorchModel
 from botorch.models.model_list_gp_regression import ModelListGP
 from botorch.models.multitask import MultiTaskGP
@@ -25,6 +26,7 @@ from botorch.sampling.pathwise.utils import (
     TInputTransform,
 )
 from botorch.utils.dispatcher import Dispatcher
+from botorch.utils.transforms import is_ensemble
 from botorch.utils.types import DEFAULT
 from gpytorch.kernels.kernel import Kernel
 from gpytorch.likelihoods import _GaussianLikelihoodBase, Likelihood, LikelihoodList
@@ -74,6 +76,7 @@ def _gaussian_update_exact(
     noise_covariance: Tensor | LinearOperator | None = None,
     scale_tril: Tensor | LinearOperator | None = None,
     input_transform: TInputTransform | None = None,
+    is_ensemble: bool = False,
 ) -> GeneralizedLinearPath:
     # Prepare Cholesky factor of `Cov(y, y)` and noise sample values as needed
     if isinstance(noise_covariance, (NoneType, ZeroLinearOperator)):
@@ -104,7 +107,9 @@ def _gaussian_update_exact(
         points=points,
         input_transform=input_transform,
     )
-    return GeneralizedLinearPath(feature_map=feature_map, weight=weight.squeeze(-1))
+    return GeneralizedLinearPath(
+        feature_map=feature_map, weight=weight.squeeze(-1), is_ensemble=is_ensemble
+    )
 
 
 @GaussianUpdate.register(ExactGP, _GaussianLikelihoodBase)
@@ -135,6 +140,7 @@ def _gaussian_update_ExactGP(
         noise_covariance=noise_covariance,
         scale_tril=scale_tril,
         input_transform=get_input_transform(model),
+        is_ensemble=is_ensemble(model),
     )
 
 
@@ -166,17 +172,58 @@ def _draw_kernel_feature_paths_MultiTaskGP(
         if model._task_feature < 0
         else model._task_feature
     )
-    base_kernel = deepcopy(model.covar_module)
-    base_kernel.active_dims = torch.LongTensor(
-        [index for index in range(num_inputs) if index != task_index],
-        device=base_kernel.device,
-    )
-    task_kernel = deepcopy(model.task_covar_module)
-    task_kernel.active_dims = torch.LongTensor([task_index], device=base_kernel.device)
+    
+    # Extract kernels from the product kernel structure
+    # model.covar_module is a ProductKernel with data_covar_module and task_covar_module
+    from gpytorch.kernels import ProductKernel
+    
+    if isinstance(model.covar_module, ProductKernel):
+        # Find the data kernel (without task feature active dims) and task kernel
+        data_kernel = None
+        task_kernel = None
+        
+        for kernel in model.covar_module.kernels:
+            if hasattr(kernel, 'active_dims') and kernel.active_dims is not None:
+                if task_index in kernel.active_dims:
+                    task_kernel = deepcopy(kernel)
+                else:
+                    data_kernel = deepcopy(kernel)
+            else:
+                # If no active_dims, assume it's the data kernel
+                data_kernel = deepcopy(kernel)
+                data_kernel.active_dims = torch.LongTensor(
+                    [index for index in range(num_inputs) if index != task_index],
+                    device=data_kernel.device,
+                )
+        
+        if task_kernel is None:
+            # Fallback: create task kernel from scratch
+            from gpytorch.kernels import IndexKernel
+            task_kernel = IndexKernel(
+                num_tasks=model.num_tasks,
+                rank=model._rank,
+                active_dims=[task_index],
+            )
+            task_kernel = task_kernel.to(device=model.covar_module.device)
+    else:
+        # Fallback for non-ProductKernel case
+        data_kernel = deepcopy(model.covar_module)
+        data_kernel.active_dims = torch.LongTensor(
+            [index for index in range(num_inputs) if index != task_index],
+            device=data_kernel.device,
+        )
+        
+        from gpytorch.kernels import IndexKernel
+        task_kernel = IndexKernel(
+            num_tasks=model.num_tasks,
+            rank=model._rank,
+            active_dims=[task_index],
+        )
+        task_kernel = task_kernel.to(device=model.covar_module.device)
 
     # Return exact update using product kernel
     return _gaussian_update_exact(
-        kernel=base_kernel * task_kernel,
+        kernel=data_kernel * task_kernel,
         points=points,
         target_values=target_values,
         sample_values=sample_values,
@@ -309,4 +356,5 @@ def _gaussian_update_ApproximateGP_VariationalStrategy(
         sample_values=sample_values,
         scale_tril=L,
         input_transform=input_transform,
+        is_ensemble=is_ensemble(model),
     )
