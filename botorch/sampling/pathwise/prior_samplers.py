@@ -157,9 +157,11 @@ def _draw_kernel_feature_paths_MultiTaskGP(
     if not isinstance(model.covar_module, ProductKernel):
         # Fallback for non-ProductKernel cases (legacy support)
         import warnings
+
         warnings.warn(
-            f"MultiTaskGP with non-ProductKernel detected ({type(model.covar_module)}). "
-            "Consider using ProductKernel(IndexKernel, SomeOtherKernel) for better compatibility.",
+            f"MultiTaskGP with non-ProductKernel detected "
+            f"({type(model.covar_module)}). Consider using "
+            "ProductKernel(IndexKernel, SomeOtherKernel) for better compatibility.",
             UserWarning,
         )
         combined_kernel = model.covar_module
@@ -178,7 +180,8 @@ def _draw_kernel_feature_paths_MultiTaskGP(
                 else:
                     data_kernel = deepcopy(kernel)
             else:
-                # If no active_dims on data kernel, add them so downstream helpers don't error
+                # If no active_dims on data kernel, add them so downstream
+                # helpers don't error
                 data_kernel = deepcopy(kernel)
                 data_kernel.active_dims = torch.LongTensor(
                     [
@@ -202,8 +205,9 @@ def _draw_kernel_feature_paths_MultiTaskGP(
         # Ensure the data kernel was found
         if data_kernel is None:
             raise ValueError(
-                f"Could not identify data kernel from ProductKernel. "
-                "MTGPs should follow the standard ProductKernel(IndexKernel, SomeOtherKernel) pattern."
+                "Could not identify data kernel from ProductKernel. "
+                "MTGPs should follow the standard "
+                "ProductKernel(IndexKernel, SomeOtherKernel) pattern."
             )
 
         # Use the existing product kernel structure

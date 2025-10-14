@@ -125,13 +125,14 @@ class DirectSumFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
             # Collect/scale individual feature blocks
             block = feature_map(x, **kwargs).to_dense()
             block_ndim = len(feature_map.output_shape)
-            
+
             # Handle broadcasting for lower-dimensional feature maps
             if block_ndim < ndim:
-                # Determine how the tiling/broadcasting works for lower-dimensional feature maps
+                # Determine how the tiling/broadcasting works for lower-dimensional
+                # feature maps
                 tile_shape = shape[-ndim:-block_ndim]
                 num_copies = prod(tile_shape)
-                
+
                 # Scale down by sqrt of number of copies to maintain proper variance
                 if num_copies > 1:
                     block = block * (num_copies**-0.5)
@@ -155,9 +156,11 @@ class DirectSumFeatureMap(FeatureMap, ModuleListMixin[FeatureMap]):
     @property
     def raw_output_shape(self) -> Size:
         # Handle empty DirectSumFeatureMap case - can occur when:
-        # 1. Purposely start with an empty container and plan to append feature maps later, or
+        # 1. Purposely start with an empty container and plan to append feature
+        #    maps later, or
         # 2. Deleted the last entry and the list is now length-zero.
-        # Returning Size([]) keeps the object in a queryable state until real feature maps are added.
+        # Returning Size([]) keeps the object in a queryable state until real
+        # feature maps are added.
         if not self:
             return Size([])
 
@@ -217,12 +220,13 @@ class SparseDirectSumFeatureMap(DirectSumFeatureMap):
         for feature_map in self:
             block = feature_map(x, **kwargs)
             block_ndim = len(feature_map.output_shape)
-            
+
             # Handle blocks that match the target dimensionality
             if block_ndim == ndim:
                 # Convert LinearOperator to dense tensor if needed
                 block = block.to_dense() if isinstance(block, LinearOperator) else block
-                # Ensure block is in sparse format for efficient block diagonal construction
+                # Ensure block is in sparse format for efficient block diagonal
+                # construction
                 block = block if block.is_sparse else block.to_sparse()
             else:
                 # For lower-dimensional blocks, we need to expand dimensions
@@ -234,7 +238,7 @@ class SparseDirectSumFeatureMap(DirectSumFeatureMap):
                 )
                 block = block.to_dense()[multi_index]
             blocks.append(block)
-        
+
         # Construct sparse block diagonal matrix from all blocks
         return sparse_block_diag(blocks, base_ndim=ndim)
 
