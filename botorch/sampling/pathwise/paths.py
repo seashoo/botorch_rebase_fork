@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
-from string import ascii_letters
 from typing import Any
 
 from botorch.exceptions.errors import UnsupportedError
@@ -20,7 +19,7 @@ from botorch.sampling.pathwise.utils import (
     TOutputTransform,
     TransformedModuleMixin,
 )
-from torch import einsum, Tensor
+from torch import Tensor
 from torch.nn import Module, Parameter
 
 
@@ -78,7 +77,7 @@ class PathDict(SamplePath, ModuleDictMixin[SamplePath]):
     @property
     def paths(self):
         """Access the internal module dict."""
-        return getattr(self, "_paths_dict")
+        return self._paths_dict
 
     def set_ensemble_as_batch(self, ensemble_as_batch: bool) -> None:
         """Sets whether the ensemble dimension is considered as a batch dimension.
@@ -129,7 +128,7 @@ class PathList(SamplePath, ModuleListMixin[SamplePath]):
     @property
     def paths(self):
         """Access the internal module list."""
-        return getattr(self, "_paths_list")
+        return self._paths_list
 
     def set_ensemble_as_batch(self, ensemble_as_batch: bool) -> None:
         """Sets whether the ensemble dimension is considered as a batch dimension.
@@ -210,7 +209,7 @@ class GeneralizedLinearPath(SamplePath):
         output = (features @ self.weight.unsqueeze(-1)).squeeze(-1)
         ndim = len(self.feature_map.output_shape)
         if ndim > 1:  # sum over the remaining feature dimensions
-            output = einsum(f"...{ascii_letters[:ndim - 1]}->...", output)
+            output = output.sum(dim=list(range(-ndim + 1, 0)))
 
         return output if self.bias_module is None else output + self.bias_module(x)
 

@@ -186,8 +186,9 @@ def _draw_kernel_feature_paths_MultiTaskGP(
         warnings.warn(
             f"MultiTaskGP with non-ProductKernel detected "
             f"({type(model.covar_module)}). Consider using "
-            "ProductKernel(IndexKernel, SomeOtherKernel) for better compatibility.",
+            "ProductKernel(SomeKernel, IndexKernel) for better compatibility.",
             UserWarning,
+            stacklevel=2,
         )
         combined_kernel = model.covar_module
     else:
@@ -228,7 +229,7 @@ def _draw_kernel_feature_paths_MultiTaskGP(
             raise ValueError(
                 "Could not identify data kernel from ProductKernel. "
                 "MTGPs should follow the standard "
-                "ProductKernel(IndexKernel, SomeOtherKernel) pattern."
+                "ProductKernel(SomeKernel, IndexKernel) pattern."
             )
 
         # Use the existing product kernel structure

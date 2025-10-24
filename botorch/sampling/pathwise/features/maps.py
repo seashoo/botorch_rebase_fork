@@ -541,7 +541,7 @@ class IndexKernelFeatureMap(KernelFeatureMap):
 
     @property
     def raw_output_shape(self) -> Size:
-        return self.kernel.raw_var.shape[-1:]
+        return self.kernel.covar_matrix.shape[-1:]
 
 
 class LinearKernelFeatureMap(KernelFeatureMap):
