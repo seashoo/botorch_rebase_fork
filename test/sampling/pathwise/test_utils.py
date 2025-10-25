@@ -238,7 +238,7 @@ class TestUtilsHelpers(BotorchTestCase):
         """Test _get_train_inputs_Model with _original_train_inputs."""
         from unittest.mock import patch
 
-        from botorch.sampling.pathwise.utils.helpers import get_train_inputs
+        from botorch.sampling.pathwise.utils import get_train_inputs
 
         # Use one of the models from setUp
         model = self.models[0]
@@ -254,7 +254,7 @@ class TestUtilsHelpers(BotorchTestCase):
     def test_get_train_targets_multitask_variational(self):
         """Test _get_train_targets_SingleTaskVariationalGP with multitask."""
         from botorch.models import SingleTaskVariationalGP
-        from botorch.sampling.pathwise.utils.helpers import get_train_targets
+        from botorch.sampling.pathwise.utils import get_train_targets
 
         # Create a variational model with multiple outputs
         with torch.random.fork_rng():

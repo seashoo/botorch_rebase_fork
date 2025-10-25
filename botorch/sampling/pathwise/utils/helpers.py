@@ -7,12 +7,10 @@
 from __future__ import annotations
 
 from sys import maxsize
-from typing import Callable, Iterable, Iterator, List, overload, Tuple, Type, TypeVar
+from typing import Callable, Iterable, Iterator, Tuple, Type, TypeVar
 
 import torch
-from botorch.models.approximate_gp import SingleTaskVariationalGP
 from botorch.models.gpytorch import GPyTorchModel
-from botorch.models.model import Model, ModelList
 from botorch.models.transforms.input import InputTransform
 from botorch.models.transforms.outcome import OutcomeTransform
 from botorch.sampling.pathwise.utils.mixins import TransformedModuleMixin
@@ -21,7 +19,6 @@ from botorch.sampling.pathwise.utils.transforms import (
     OutcomeUntransformer,
     TensorTransform,
 )
-from botorch.utils.dispatcher import Dispatcher
 from botorch.utils.types import MISSING
 from gpytorch import kernels
 from gpytorch.kernels.kernel import Kernel
@@ -29,8 +26,6 @@ from linear_operator import LinearOperator
 from torch import Size, Tensor
 
 TKernel = TypeVar("TKernel", bound=Kernel)
-GetTrainInputs = Dispatcher("get_train_inputs")
-GetTrainTargets = Dispatcher("get_train_targets")
 INF_DIM_KERNELS: Tuple[Type[Kernel], ...] = (
     kernels.MaternKernel,
     kernels.RBFKernel,
@@ -227,107 +222,3 @@ def get_output_transform(model: GPyTorchModel) -> OutcomeUntransformer | None:
         return None
 
     return OutcomeUntransformer(transform=transform, num_outputs=model.num_outputs)
-
-
-@overload
-def get_train_inputs(model: Model, transformed: bool = False) -> Tuple[Tensor, ...]:
-    pass  # pragma: no cover
-
-
-@overload
-def get_train_inputs(model: ModelList, transformed: bool = False) -> List[...]:
-    pass  # pragma: no cover
-
-
-def get_train_inputs(model: Model, transformed: bool = False):
-    return GetTrainInputs(model, transformed=transformed)
-
-
-@GetTrainInputs.register(Model)
-def _get_train_inputs_Model(model: Model, transformed: bool = False) -> Tuple[Tensor]:
-    if not transformed:
-        original_train_input = getattr(model, "_original_train_inputs", None)
-        if torch.is_tensor(original_train_input):
-            return (original_train_input,)
-
-    (X,) = model.train_inputs
-    transform = get_input_transform(model)
-    if transform is None:
-        return (X,)
-
-    if model.training:
-        return (transform.forward(X) if transformed else X,)
-    return (X if transformed else transform.untransform(X),)
-
-
-@GetTrainInputs.register(SingleTaskVariationalGP)
-def _get_train_inputs_SingleTaskVariationalGP(
-    model: SingleTaskVariationalGP, transformed: bool = False
-) -> Tuple[Tensor]:
-    (X,) = model.model.train_inputs
-    if model.training != transformed:
-        return (X,)
-
-    transform = get_input_transform(model)
-    if transform is None:
-        return (X,)
-
-    return (transform.forward(X) if model.training else transform.untransform(X),)
-
-
-@GetTrainInputs.register(ModelList)
-def _get_train_inputs_ModelList(
-    model: ModelList, transformed: bool = False
-) -> List[...]:
-    return [get_train_inputs(m, transformed=transformed) for m in model.models]
-
-
-@overload
-def get_train_targets(model: Model, transformed: bool = False) -> Tensor:
-    pass  # pragma: no cover
-
-
-@overload
-def get_train_targets(model: ModelList, transformed: bool = False) -> List[...]:
-    pass  # pragma: no cover
-
-
-def get_train_targets(model: Model, transformed: bool = False):
-    return GetTrainTargets(model, transformed=transformed)
-
-
-@GetTrainTargets.register(Model)
-def _get_train_targets_Model(model: Model, transformed: bool = False) -> Tensor:
-    Y = model.train_targets
-
-    # Note: Avoid using `get_output_transform` here since it creates a Module
-    transform = getattr(model, "outcome_transform", None)
-    if transformed or transform is None:
-        return Y
-
-    if model.num_outputs == 1:
-        return transform.untransform(Y.unsqueeze(-1))[0].squeeze(-1)
-    return transform.untransform(Y.transpose(-2, -1))[0].transpose(-2, -1)
-
-
-@GetTrainTargets.register(SingleTaskVariationalGP)
-def _get_train_targets_SingleTaskVariationalGP(
-    model: Model, transformed: bool = False
-) -> Tensor:
-    Y = model.model.train_targets
-    transform = getattr(model, "outcome_transform", None)
-    if transformed or transform is None:
-        return Y
-
-    if model.num_outputs == 1:
-        return transform.untransform(Y.unsqueeze(-1))[0].squeeze(-1)
-
-    # SingleTaskVariationalGP.__init__ doesn't bring the multitoutpout dimension inside
-    return transform.untransform(Y)[0]
-
-
-@GetTrainTargets.register(ModelList)
-def _get_train_targets_ModelList(
-    model: ModelList, transformed: bool = False
-) -> List[...]:
-    return [get_train_targets(m, transformed=transformed) for m in model.models]

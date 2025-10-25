@@ -4,13 +4,12 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+from botorch.models.utils.helpers import get_train_inputs, get_train_targets
 from botorch.sampling.pathwise.utils.helpers import (
     append_transform,
     get_input_transform,
     get_kernel_num_inputs,
     get_output_transform,
-    get_train_inputs,
-    get_train_targets,
     is_finite_dimensional,
     kernel_instancecheck,
     prepend_transform,
