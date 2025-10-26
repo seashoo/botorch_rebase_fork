@@ -19,10 +19,8 @@ from __future__ import annotations
 
 from typing import Any
 
-import torch
-from botorch.exceptions.errors import UnsupportedError
 from botorch.models.approximate_gp import ApproximateGPyTorchModel
-from botorch.models.deterministic import GenericDeterministicModel
+from botorch.models.deterministic import MatheronPathModel
 from botorch.models.model import ModelList
 from botorch.models.model_list_gp_regression import ModelListGP
 from botorch.sampling.pathwise.paths import PathDict, PathList, SamplePath
@@ -43,10 +41,9 @@ from botorch.sampling.pathwise.utils import (
 )
 from botorch.utils.context_managers import delattr_ctx
 from botorch.utils.dispatcher import Dispatcher
-from botorch.utils.transforms import is_ensemble
 from gpytorch.models import ApproximateGP, ExactGP, GP
 from gpytorch.variational import _VariationalStrategy
-from torch import Size, Tensor
+from torch import Size
 
 DrawMatheronPaths = Dispatcher("draw_matheron_paths")
 
@@ -94,7 +91,7 @@ class MatheronPath(PathDict):
 
 def get_matheron_path_model(
     model: GP, sample_shape: Size | None = None, ensemble_as_batch: bool = False
-) -> GenericDeterministicModel:
+) -> MatheronPathModel:
     r"""Generates a deterministic model using a single Matheron path drawn
     from the model's posterior.
 
@@ -108,7 +105,7 @@ def get_matheron_path_model(
             deterministic model will behave as if the `sample_shape` is prepended
             to the `batch_shape` of the model. The inputs used to evaluate the model
             must be adjusted to match.
-        ensemble_as_batch: If True, and model is an ensemble model, the resuling path
+        ensemble_as_batch: If True, and model is an ensemble model, the resulting path
             model will treat the ensemble dimension as a batch dimension, which means
             that its inputs have to contain the ensemble dimension in the -3 position,
             i.e. `batch_shape x ensemble_size x q x d`. This is used when optimizing the
@@ -118,68 +115,12 @@ def get_matheron_path_model(
     Returns:
         A deterministic model that evaluates the Matheron path.
     """
-    sample_shape = Size() if sample_shape is None else sample_shape
-    path = draw_matheron_paths(model, sample_shape=sample_shape)
-    path.set_ensemble_as_batch(ensemble_as_batch)
-    num_outputs = model.num_outputs
-    if isinstance(model, ModelList):
-        # Check if any model in the list a multi-output model
-        for m in model.models:
-            if hasattr(m, "_task_feature") or "MultiTask" in type(m).__name__:
-                raise UnsupportedError(
-                    "A model-list of multi-output models is not supported."
-                )
-
-    def f(X: Tensor) -> Tensor:
-        r"""Reshapes the path evaluations to bring the output dimension to the end.
-
-        Args:
-            X: The input tensor of shape `batch_shape x q x d`.
-                If the model is batched, `batch_shape` must be broadcastable to
-                the model batch shape.
-
-        Returns:
-            The output tensor of shape `[sample_shape x] batch_shape x q x m`.
-        """
-        if num_outputs == 1:
-            res = path(X).unsqueeze(-1)
-        elif isinstance(model, ModelList):
-            path_outputs = path(X)
-            # For ModelListGP with batched models, concatenate along output dimension
-            # Each element in path_outputs may have shape [..., q] or [..., batch, q]
-            # We need to handle both cases correctly
-            if isinstance(model, ModelListGP) and model.models:
-                # Check if models are batched
-                first_model = model.models[0]
-                if (
-                    hasattr(first_model, "_num_outputs")
-                    and first_model._num_outputs > 1
-                ):
-                    # Models are batched, concatenate along the batch dimension
-                    res = torch.cat(path_outputs, dim=-2)
-                    # Transpose to put outputs last: [..., q, m]
-                    res = res.transpose(-1, -2)
-                else:
-                    # Models are not batched, stack them
-                    res = torch.stack(path_outputs, dim=-1)
-            else:
-                # Handle empty path_outputs (e.g., from empty ModelList)
-                if not path_outputs:
-                    # Return tensor with shape (..., 0) for empty model list
-                    res = torch.empty(*X.shape[:-1], 0, device=X.device, dtype=X.dtype)
-                else:
-                    res = torch.stack(path_outputs, dim=-1)
-        else:
-            res = path(X.unsqueeze(-3)).transpose(-1, -2)
-        return res
-
-    path_model = GenericDeterministicModel(
-        f=f,
-        num_outputs=num_outputs,
-        batch_shape=sample_shape + model.batch_shape,
+    # Delegate to the MatheronPathModel class
+    return MatheronPathModel(
+        model=model,
+        sample_shape=sample_shape,
+        ensemble_as_batch=ensemble_as_batch,
     )
-    path_model._is_ensemble = is_ensemble(model) or len(sample_shape) > 0
-    return path_model
 
 
 def draw_matheron_paths(
@@ -212,6 +153,27 @@ def draw_matheron_paths(
         prior_sampler=prior_sampler,
         update_strategy=update_strategy,
         **kwargs,
+    )
+
+
+@DrawMatheronPaths.register(ModelList)
+def _draw_matheron_paths_ModelList(
+    model: ModelList,
+    sample_shape: Size,
+    *,
+    prior_sampler: TPathwisePriorSampler = draw_kernel_feature_paths,
+    update_strategy: TPathwiseUpdate = gaussian_update,
+):
+    return PathList(
+        [
+            draw_matheron_paths(
+                model=m,
+                sample_shape=sample_shape,
+                prior_sampler=prior_sampler,
+                update_strategy=update_strategy,
+            )
+            for m in model.models
+        ]
     )
 
 

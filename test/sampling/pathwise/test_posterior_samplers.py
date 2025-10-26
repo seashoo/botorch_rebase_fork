@@ -13,7 +13,7 @@ import torch
 from botorch import models
 from botorch.exceptions.errors import UnsupportedError
 from botorch.models import ModelListGP, SingleTaskGP
-from botorch.models.deterministic import GenericDeterministicModel
+from botorch.models.deterministic import MatheronPathModel
 from botorch.sampling.pathwise import (
     draw_kernel_feature_paths,
     draw_matheron_paths,
@@ -34,7 +34,7 @@ class TestGetMatheronPathModel(BotorchTestCase):
         from unittest.mock import patch
 
         from botorch.exceptions.errors import UnsupportedError
-        from botorch.models.deterministic import GenericDeterministicModel
+        from botorch.models.deterministic import MatheronPathModel
         from botorch.sampling.pathwise.posterior_samplers import get_matheron_path_model
 
         # Test single output model
@@ -43,7 +43,7 @@ class TestGetMatheronPathModel(BotorchTestCase):
         sample_shape = Size([3])
 
         path_model = get_matheron_path_model(model, sample_shape=sample_shape)
-        self.assertIsInstance(path_model, GenericDeterministicModel)
+        self.assertIsInstance(path_model, MatheronPathModel)
         self.assertEqual(path_model.num_outputs, 1)
         self.assertTrue(path_model._is_ensemble)
 
@@ -58,9 +58,8 @@ class TestGetMatheronPathModel(BotorchTestCase):
         output = path_model(X)
         self.assertEqual(output.shape, (4, 1))
 
-        # Test ModelListGP
-        batch_config = replace(config, batch_shape=Size([2]))
-        model_list = gen_module(models.ModelListGP, batch_config)
+        # Test ModelListGP (use non-batched config)
+        model_list = gen_module(models.ModelListGP, config)
         path_model = get_matheron_path_model(model_list)
         self.assertEqual(path_model.num_outputs, model_list.num_outputs)
 
@@ -86,7 +85,7 @@ class TestGetMatheronPathModel(BotorchTestCase):
                 pass
 
         with patch(
-            "botorch.sampling.pathwise.posterior_samplers.draw_matheron_paths",
+            "botorch.sampling.pathwise.draw_matheron_paths",
             return_value=MockPath(),
         ):
             path_model = get_matheron_path_model(generic_model_list)
@@ -110,7 +109,7 @@ class TestGetMatheronPathModel(BotorchTestCase):
                 pass
 
         with patch(
-            "botorch.sampling.pathwise.posterior_samplers.draw_matheron_paths",
+            "botorch.sampling.pathwise.draw_matheron_paths",
             return_value=EmptyMockPath(),
         ):
             # Skip testing empty ModelListGP due to batch_shape issue
@@ -141,7 +140,7 @@ class TestGetMatheronPathModel(BotorchTestCase):
                 pass
 
         with patch(
-            "botorch.sampling.pathwise.posterior_samplers.draw_matheron_paths",
+            "botorch.sampling.pathwise.draw_matheron_paths",
             return_value=NonBatchedMockPath(),
         ):
             path_model3 = get_matheron_path_model(non_batched_model_list)
@@ -205,7 +204,7 @@ class TestGetMatheronPathModel(BotorchTestCase):
                 pass
 
         with patch(
-            "botorch.sampling.pathwise.posterior_samplers.draw_matheron_paths",
+            "botorch.sampling.pathwise.draw_matheron_paths",
             return_value=MockPath(),
         ):
             path_model = get_matheron_path_model(mock_multi_model)
@@ -240,7 +239,7 @@ class TestGetMatheronPathModel(BotorchTestCase):
                 pass
 
         with patch(
-            "botorch.sampling.pathwise.posterior_samplers.draw_matheron_paths",
+            "botorch.sampling.pathwise.draw_matheron_paths",
             return_value=MockPath(),
         ):
             path_model = get_matheron_path_model(model)
@@ -276,7 +275,7 @@ class TestGetMatheronPathModel(BotorchTestCase):
                 pass
 
         with patch(
-            "botorch.sampling.pathwise.posterior_samplers.draw_matheron_paths",
+            "botorch.sampling.pathwise.draw_matheron_paths",
             return_value=MockPath(),
         ):
             path_model = get_matheron_path_model(model)
@@ -306,7 +305,7 @@ class TestGetMatheronPathModel(BotorchTestCase):
                 pass
 
         with patch(
-            "botorch.sampling.pathwise.posterior_samplers.draw_matheron_paths",
+            "botorch.sampling.pathwise.draw_matheron_paths",
             return_value=EmptyPath(),
         ):
             path_model = get_matheron_path_model(model_list)
@@ -398,7 +397,7 @@ class TestDrawMatheronPaths(BotorchTestCase):
         for model in (self.inferred_noise_gp, moo_model, model_list):
             path_model = get_matheron_path_model(model=model)
             self.assertFalse(path_model._is_ensemble)
-            self.assertIsInstance(path_model, GenericDeterministicModel)
+            self.assertIsInstance(path_model, MatheronPathModel)
             for X in (test_X, batch_test_X):
                 self.assertEqual(
                     model.posterior(X).mean.shape, path_model.posterior(X).mean.shape
