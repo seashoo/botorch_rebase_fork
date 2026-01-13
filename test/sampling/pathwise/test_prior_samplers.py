@@ -210,6 +210,22 @@ class TestDrawKernelFeaturePaths(BotorchTestCase):
         result = DrawKernelFeaturePaths(model, sample_shape=Size([2]))
         self.assertIsNotNone(result)
 
+    def test_task_specific_mean_fallback(self):
+        """Test _TaskSpecificMean fallback when mean has 1D output."""
+        from botorch.sampling.pathwise.prior_samplers import _TaskSpecificMean
+        from gpytorch.means import ConstantMean
+
+        # Test with a simple mean that returns 1D output
+        simple_mean = ConstantMean()
+        wrapped_mean = _TaskSpecificMean(simple_mean, task_feature=1)
+
+        # Input with task indicators
+        x = torch.rand(5, 2)
+        output = wrapped_mean(x)
+
+        # Should fall through to return all_means directly
+        self.assertEqual(output.ndim, 1)
+
     def test_multitask_gp_kernel_handling(self):
         """Test MultiTaskGP kernel handling for various kernel configurations."""
         from botorch.models import MultiTaskGP
@@ -245,3 +261,22 @@ class TestDrawKernelFeaturePaths(BotorchTestCase):
 
         paths3 = draw_kernel_feature_paths(model3, sample_shape=Size([1]))
         self.assertIsNotNone(paths3)
+
+    def test_multitask_gp_missing_data_kernel_error(self):
+        """Test error when ProductKernel has no identifiable data kernel."""
+        from botorch.models import MultiTaskGP
+        from gpytorch.kernels import IndexKernel, ProductKernel
+
+        train_X = torch.rand(8, 3, device=self.device, dtype=torch.float64)
+        train_Y = torch.rand(8, 1, device=self.device, dtype=torch.float64)
+
+        # Create model with ProductKernel of only task kernels (both have task_index)
+        model = MultiTaskGP(train_X=train_X, train_Y=train_Y, task_feature=2)
+        # Both kernels have active_dims containing task_index (2)
+        k1 = IndexKernel(num_tasks=2, rank=1, active_dims=[2])
+        k2 = IndexKernel(num_tasks=2, rank=1, active_dims=[2])
+        model.covar_module = ProductKernel(k1, k2)
+
+        with self.assertRaises(ValueError) as cm:
+            draw_kernel_feature_paths(model, sample_shape=Size([1]))
+        self.assertIn("Could not identify data kernel", str(cm.exception))

@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 from botorch.models.utils.helpers import get_train_inputs, get_train_targets
+from botorch.sampling.pathwise.utils import transforms
 from botorch.sampling.pathwise.utils.helpers import (
     append_transform,
     get_input_transform,
@@ -58,6 +59,7 @@ __all__ = [
     "TensorTransform",
     "TInputTransform",
     "TOutputTransform",
+    "transforms",
     "TransformedModuleMixin",
     "OutcomeUntransformer",
     "untransform_shape",

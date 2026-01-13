@@ -96,8 +96,9 @@ class TestGaussianUpdates(BotorchTestCase):
             # Compare with manually computed update weights `Cov(y, y)^{-1} (y - f - e)`
             Luu = psd_safe_cholesky(Kuu.to_dense())
             errors = target_values - sample_values
-            if noise_values is not None:
+            if noise_values is not None and not isinstance(model, models.MultiTaskGP):
                 # Apply noise properly accounting for batch dimensions
+                # Skip for MultiTaskGP as its noise structure is different
                 try:
                     noise_chol = model.likelihood.noise_covar(
                         shape=Z.shape[:-1]
@@ -322,3 +323,24 @@ class TestGaussianUpdates(BotorchTestCase):
 
         update_paths3 = gaussian_update(model=model3, sample_values=sample_values)
         self.assertIsNotNone(update_paths3)
+
+    def test_multitask_gp_missing_data_kernel_error(self):
+        """Test error when ProductKernel has no identifiable data kernel."""
+        from botorch.models import MultiTaskGP
+        from gpytorch.kernels import IndexKernel, ProductKernel
+
+        train_X = torch.rand(8, 3, device=self.device, dtype=torch.float64)
+        train_Y = torch.rand(8, 1, device=self.device, dtype=torch.float64)
+
+        # Create model with ProductKernel of only task kernels (both have task_index)
+        model = MultiTaskGP(train_X=train_X, train_Y=train_Y, task_feature=2)
+        # Both kernels have active_dims containing task_index (2)
+        k1 = IndexKernel(num_tasks=2, rank=1, active_dims=[2])
+        k2 = IndexKernel(num_tasks=2, rank=1, active_dims=[2])
+        model.covar_module = ProductKernel(k1, k2)
+
+        sample_values = torch.randn(8, device=self.device, dtype=torch.float64)
+
+        with self.assertRaises(ValueError) as cm:
+            gaussian_update(model=model, sample_values=sample_values)
+        self.assertIn("Could not identify data kernel", str(cm.exception))

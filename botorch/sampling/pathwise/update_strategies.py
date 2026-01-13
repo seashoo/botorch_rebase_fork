@@ -155,14 +155,35 @@ def _draw_kernel_feature_paths_MultiTaskGP(
     noise_covariance: Tensor | LinearOperator | None = None,
     **ignore: Any,
 ) -> GeneralizedLinearPath:
+    from linear_operator.operators import DiagLinearOperator
+
     if points is None:
         (points,) = get_train_inputs(model, transformed=True)
 
     if target_values is None:
         target_values = get_train_targets(model, transformed=True)
 
+    # Build proper noise covariance for stacked format
+    # The default noise_covar returns [batch, n_tasks, n, n] which doesn't match
+    # our stacked format. Instead, we need a diagonal [n, n] matrix where each
+    # point's noise is selected based on its task indicator.
     if noise_covariance is None:
-        noise_covariance = likelihood.noise_covar(shape=points.shape[:-1])
+        num_inputs = points.shape[-1]
+        task_index = (
+            num_inputs + model._task_feature
+            if model._task_feature < 0
+            else model._task_feature
+        )
+        task_indices = points[..., task_index].long()
+
+        # Get per-task noise and select for each point
+        if hasattr(likelihood, "noise") and likelihood.noise.numel() > 1:
+            # MultitaskGaussianLikelihood with per-task noise
+            stacked_noise = likelihood.noise[task_indices]
+            noise_covariance = DiagLinearOperator(stacked_noise)
+        else:
+            # Scalar noise case
+            noise_covariance = likelihood.noise_covar(shape=points.shape[:-1])
 
     # Prepare product kernel
     num_inputs = points.shape[-1]

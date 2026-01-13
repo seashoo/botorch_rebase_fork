@@ -31,6 +31,39 @@ from torch import Size, Tensor
 from torch.nn import Module
 
 TPathwisePriorSampler = Callable[[GP, Size], SamplePath]
+
+
+class _TaskSpecificMean(Module):
+    """Wrapper that extracts task-specific means from a MultitaskMean.
+
+    For MultiTaskGP with stacked inputs (where each point includes a task indicator),
+    the MultitaskMean outputs [n_points, n_tasks]. This wrapper extracts the
+    appropriate mean for each point based on its task indicator, returning [n_points].
+    """
+
+    def __init__(self, mean_module: Module, task_feature: int):
+        super().__init__()
+        self.mean_module = mean_module
+        self.task_feature = task_feature
+
+    def forward(self, x: Tensor) -> Tensor:
+        # Get all task means: [n_points, n_tasks]
+        all_means = self.mean_module(x)
+
+        # Extract task indicator from inputs
+        task_indices = x[..., self.task_feature].long()
+
+        # Select the mean for each point's specific task
+        # all_means: [..., n_points, n_tasks]
+        # task_indices: [..., n_points]
+        # result: [..., n_points]
+        if all_means.ndim > 1 and all_means.shape[-1] > 1:
+            # Use indexing to select task-specific means
+            batch_indices = torch.arange(all_means.shape[-2], device=x.device)
+            return all_means[..., batch_indices, task_indices]
+        return all_means
+
+
 DrawKernelFeaturePaths = Dispatcher("draw_kernel_feature_paths")
 
 
@@ -214,8 +247,12 @@ def _draw_kernel_feature_paths_MultiTaskGP(
         # Use the existing product kernel structure
         combined_kernel = data_kernel * task_kernel
 
+    # Wrap the MultitaskMean to extract task-specific means for each point
+    # MultitaskMean outputs [n_points, n_tasks], but we need [n_points]
+    mean_module = _TaskSpecificMean(model.mean_module, task_feature=task_index)
+
     return _draw_kernel_feature_paths_fallback(
-        mean_module=model.mean_module,
+        mean_module=mean_module,
         covar_module=combined_kernel,
         input_transform=get_input_transform(model),
         output_transform=get_output_transform(model),

@@ -483,3 +483,25 @@ class TestDrawMatheronPaths(BotorchTestCase):
                 self.assertEqual(len(sample_list), len(model_list.models))
                 for path, sample in zip(path_list, sample_list):
                     self.assertTrue(path(X).equal(sample))
+
+    def test_model_list_dispatcher(self):
+        """Test the ModelList dispatcher for draw_matheron_paths."""
+        from botorch.models.model import ModelList
+
+        config = TestCaseConfig(seed=0, device=self.device)
+        model1 = gen_module(models.SingleTaskGP, config)
+        model2 = gen_module(models.SingleTaskGP, config)
+
+        # Create a plain ModelList (not ModelListGP)
+        model_list = ModelList(model1, model2)
+
+        sample_shape = Size([2])
+        path_list = draw_matheron_paths(model=model_list, sample_shape=sample_shape)
+
+        self.assertIsInstance(path_list, PathList)
+        self.assertEqual(len(path_list.paths), 2)
+
+        X = torch.rand(4, config.num_inputs, device=self.device, dtype=config.dtype)
+        outputs = path_list(X)
+        self.assertIsInstance(outputs, list)
+        self.assertEqual(len(outputs), 2)
