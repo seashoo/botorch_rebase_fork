@@ -31,9 +31,9 @@ def cast(typ: Type[T], obj: Any, optional: bool = False) -> T:
 
 class _DefaultType(type):
     r"""
-    Private class whose sole instance `DEFAULT` is a special indicator
+    Private class whose sole instance ``DEFAULT`` is as a special indicator
     representing that a default value should be assigned to an argument.
-    Typically used in cases where `None` is an allowed argument.
+    Typically used in cases where ``None`` is an allowed argument.
     """
 
 
