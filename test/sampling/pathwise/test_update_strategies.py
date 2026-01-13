@@ -69,10 +69,13 @@ class TestGaussianUpdates(BotorchTestCase):
                 Kuu = Kmm + model.likelihood.noise_covar(shape=Z.shape[:-1])
 
             # Fix noise values used to generate `y = f + e`
-            with delattr_ctx(model, "outcome_transform"), patch.object(
-                torch,
-                "randn_like",
-                return_value=noise_values,
+            with (
+                delattr_ctx(model, "outcome_transform"),
+                patch.object(
+                    torch,
+                    "randn_like",
+                    return_value=noise_values,
+                ),
             ):
                 prior_paths = draw_kernel_feature_paths(
                     model, sample_shape=sample_shape

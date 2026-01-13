@@ -617,7 +617,7 @@ def gen_candidates_torch(
         if callback:
             callback(i, loss, grad)
 
-        def assign_grad():
+        def assign_grad(grad=grad, loss=loss):
             _optimizer.zero_grad()
             clamped_candidates.grad = grad
             return loss
