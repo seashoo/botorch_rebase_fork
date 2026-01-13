@@ -12,7 +12,6 @@ from types import NoneType
 from typing import Any
 
 import torch
-
 from botorch.models.approximate_gp import ApproximateGPyTorchModel
 from botorch.models.model_list_gp_regression import ModelListGP
 from botorch.models.multitask import MultiTaskGP

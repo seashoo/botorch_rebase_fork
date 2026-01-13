@@ -11,7 +11,6 @@ from typing import Any, Callable, Generic, Iterable, Iterator, Mapping, Tuple, T
 
 from botorch.models.transforms.input import InputTransform
 from botorch.models.transforms.outcome import OutcomeTransform
-
 from torch import Tensor
 from torch.nn import Module, ModuleDict, ModuleList
 
