@@ -600,6 +600,14 @@ class TestKroneckerMultiTaskGP(BotorchTestCase):
                     mll, optimizer_kwargs={"options": {"maxiter": 1}}, max_attempts=1
                 )
 
+            # test that input transform is not double-applied in cached properties
+            if use_intf:
+                expected_X = model.input_transform(train_X)
+                self.assertAllClose(model.train_inputs[0], expected_X)
+                _ = model.train_full_covar
+                _ = model.predictive_mean_cache
+                self.assertAllClose(model.train_inputs[0], expected_X)
+
             # test posterior
             test_x = torch.rand(2, 2, **tkwargs)
             posterior_f = model.posterior(test_x)
